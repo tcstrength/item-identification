@@ -1,0 +1,10 @@
+pandas
+requests
+ipykernel
+pydantic
+loguru
+python-dotenv
+tqdm
+torch
+torchvision
+pycocotools

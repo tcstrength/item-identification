@@ -1,0 +1,1 @@
+from hcmus.models._identification_model import IdentificationModel
