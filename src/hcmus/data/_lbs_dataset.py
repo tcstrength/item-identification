@@ -1,6 +1,7 @@
 import torch
 from typing import List
 from loguru import logger
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from torchvision import transforms as T
 from PIL import Image
 from tqdm import tqdm
@@ -19,14 +20,22 @@ class LbsDataset(Dataset):
         self._to_tensor = T.ToTensor()
         self._to_image = T.ToPILImage()
         self._transform = transform
-        dataset, labels = self.__download_dataset(connector)
+        self._connector = connector
+        dataset, labels = self.__download_dataset()
         logger.info(f"Number of labels: {len(labels)}")
         logger.info(f"Number of data points: {len(dataset)}")
         self._dataset = dataset
         self._labels = labels
 
-    def __download_dataset(self, connector: LabelStudioConnector) -> List:
-        tasks = connector.get_tasks(1, 100)
+    def __download_image(self, task):
+        image = self._connector.get_image(task)
+        return {
+            "image": image,
+            "task": task,
+        }
+
+    def __download_dataset(self) -> List:
+        tasks = self._connector.get_tasks(1, 100)
         dataset = []
         labels = {
             "@background": 0
@@ -46,12 +55,13 @@ class LbsDataset(Dataset):
                 if tmp not in labels:
                     labels[tmp] = len(labels)
 
-        for task in tqdm(to_download, "Downloading images"):
-            image = connector.get_image(task)
-            dataset.append({
-                "image": image,
-                "task": task,
-            })
+        # for task in tqdm(to_download, "Downloading images"):
+        with ThreadPoolExecutor() as executor:
+            futures = {executor.submit(self.__download_image, task): task for task in to_download}
+
+            for future in tqdm(as_completed(futures), total=len(to_download), desc="Downloading images"):
+                dataset.append(future.result())
+
         return dataset, labels
 
     def __getitem__(self, idx):
