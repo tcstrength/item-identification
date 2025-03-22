@@ -42,7 +42,7 @@ class DataAugmentation:
             else:
                 image = t(image)
 
-        target["boxes"] = boxes.tolist()
+        target["boxes"] = boxes
         return image, target
 
     def rotate_boxes(self, boxes, angle, img_w, img_h):
