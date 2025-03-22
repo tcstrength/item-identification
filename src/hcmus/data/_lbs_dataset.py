@@ -7,20 +7,26 @@ from PIL import Image
 from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
 from hcmus.lbs import LabelStudioConnector
+from hcmus.data._data_augmentation import DataAugmentation
 
 
 class LbsDataset(Dataset):
     def __init__(
         self,
         connector: LabelStudioConnector,
-        transform: T.Compose = None
+        augmentation: bool = False
     ):
         self._dataset = []
         self._label = []
         self._to_tensor = T.ToTensor()
         self._to_image = T.ToPILImage()
-        self._transform = transform
         self._connector = connector
+
+        if augmentation:
+            self._augment = DataAugmentation()
+        else:
+            self._augment = None
+
         dataset, labels = self.__download_dataset()
         logger.info(f"Number of labels: {len(labels)}")
         logger.info(f"Number of data points: {len(dataset)}")
@@ -35,7 +41,7 @@ class LbsDataset(Dataset):
         }
 
     def __download_dataset(self) -> List:
-        tasks = self._connector.get_tasks(1, 100)
+        tasks = self._connector.get_tasks(1, 100, page_size=512)
         dataset = []
         labels = {
             "@background": 0
@@ -73,24 +79,15 @@ class LbsDataset(Dataset):
         labels = []
         width, height = image.size
 
-        if self._transform:
-            image = self._transform(image)
-
-        tensor = self._to_tensor(image)
-        new_width = tensor.size()[2]
-        new_height = tensor.size()[1]
-        width_scale = new_width / width
-        height_scale = new_height / height
-
         for ann in task.annotations:
             ann = task.annotations[0]
             rect = ann.result[0].value
             label = rect.rectanglelabels[0]
             label_idx = self._labels[label]
-            x_min = width * (rect.x / 100) * width_scale
-            y_min = height * (rect.y / 100) * height_scale
-            x_max = x_min + (width * (rect.width / 100) * width_scale)
-            y_max = y_min + (height * (rect.height / 100) * height_scale)
+            x_min = width * (rect.x / 100)
+            y_min = height * (rect.y / 100)
+            x_max = x_min + (width * (rect.width / 100))
+            y_max = y_min + (height * (rect.height / 100))
             boxes.append([x_min, y_min, x_max, y_max])
             labels.append(label_idx)
 
@@ -98,7 +95,10 @@ class LbsDataset(Dataset):
             "boxes": torch.tensor(boxes, dtype=torch.float32),
             "labels": torch.tensor(labels, dtype=torch.int64)
         }
+        if self._augment:
+            image, target = self._augment(image, target)
 
+        tensor = self._to_tensor(image)
         return tensor, target
 
     def __len__(self):
