@@ -53,7 +53,6 @@ class FasterRCNNWrapper:
                     loss.backward()
                     optimizer.step()
                     running_loss += loss.item()
-                    break
 
                 logger.info(f"Epoch {epoch+1}/{num_epochs} - Training loss: {running_loss:.4f}")
 
@@ -62,9 +61,6 @@ class FasterRCNNWrapper:
                     mlflow.log_metrics({
                         "train_loss": running_loss
                     })
-                    model_path = "model.pth"
-                    torch.save(self._model.state_dict(), model_path)
-                    mlflow.log_artifact(model_path)
-                    # mlflow.pytorch.log_model(self._model, "model")
-
-
+                    model_path = f"model-{epoch}.pth"
+                    torch.save(self._model.state_dict, model_path)
+                    logger.info(f"Save new model at {model_path}")
