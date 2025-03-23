@@ -4,7 +4,7 @@ import hashlib
 from tqdm import tqdm
 from typing import List, Dict
 from loguru import logger
-from hcmus.core import pconf
+from hcmus.core import appconfig
 from hcmus.lbs import LabelStudioTask
 
 class LabelStudioConnector:
@@ -56,7 +56,7 @@ class LabelStudioConnector:
         image_url = f"{self._url}/{image_path}"
         file_ext = os.path.splitext(image_path)[1]
         file_name = hashlib.md5(image_path.encode()).hexdigest()
-        save_path = pconf.LABEL_STUDIO_TEMP_DIR.joinpath(file_name)
+        save_path = appconfig.LABEL_STUDIO_TEMP_DIR.joinpath(file_name)
         save_path = str(save_path) + file_ext
 
         if os.path.exists(save_path):
@@ -64,7 +64,7 @@ class LabelStudioConnector:
                 logger.info(f"Skip `{save_path}`.")
             return save_path
 
-        os.makedirs(pconf.LABEL_STUDIO_TEMP_DIR, exist_ok=True)
+        os.makedirs(appconfig.LABEL_STUDIO_TEMP_DIR, exist_ok=True)
 
         if self._verbose:
             logger.info(f"Save to `{save_path}`.")
@@ -77,11 +77,11 @@ class LabelStudioConnector:
         return save_path
 
 if __name__ == "__main__":
-    from hcmus.core import pconf
+    from hcmus.core import appconfig
     connector = LabelStudioConnector(
-        url=pconf.LABEL_STUDIO_URL,
-        api_key=pconf.LABEL_STUDIO_API_KEY,
-        project_id=pconf.LABEL_STUDIO_PROJECT_ID
+        url=appconfig.LABEL_STUDIO_URL,
+        api_key=appconfig.LABEL_STUDIO_API_KEY,
+        project_id=appconfig.LABEL_STUDIO_PROJECT_ID
     )
     tasks = connector.get_tasks(1, 1, 10)
 

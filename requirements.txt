@@ -7,4 +7,5 @@ python-dotenv
 tqdm
 torch
 torchvision
-pycocotools
+torchmetrics
+mlflow

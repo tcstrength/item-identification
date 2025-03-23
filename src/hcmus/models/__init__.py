@@ -1,1 +1,1 @@
-from hcmus.models._identification_model import IdentificationModel
+from hcmus.models._faster_rcnn import FasterRCNNWrapper

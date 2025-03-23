@@ -14,6 +14,7 @@ class LbsDataset(Dataset):
     def __init__(
         self,
         connector: LabelStudioConnector,
+        device: str,
         augmentation: bool = False
     ):
         self._dataset = []
@@ -21,9 +22,10 @@ class LbsDataset(Dataset):
         self._to_tensor = T.ToTensor()
         self._to_image = T.ToPILImage()
         self._connector = connector
+        self._device = device
 
         if augmentation:
-            self._augment = DataAugmentation()
+            self._augment = DataAugmentation(device=device, img_size=(512, 512))
         else:
             self._augment = None
 
@@ -92,13 +94,13 @@ class LbsDataset(Dataset):
             labels.append(label_idx)
 
         target = {
-            "boxes": torch.tensor(boxes, dtype=torch.float32),
-            "labels": torch.tensor(labels, dtype=torch.int64)
+            "boxes": torch.tensor(boxes, dtype=torch.float32, device=self._device),
+            "labels": torch.tensor(labels, dtype=torch.int64, device=self._device)
         }
         if self._augment:
             image, target = self._augment(image, target)
 
-        tensor = self._to_tensor(image)
+        tensor = self._to_tensor(image).to(self._device)
         return tensor, target
 
     def __len__(self):
