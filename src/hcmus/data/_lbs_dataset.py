@@ -113,7 +113,7 @@ class LbsDataset(Dataset):
         self,
         batch_size: int = 4,
         shuffle: bool = True,
-        pin_memory: bool = True
+        pin_memory: bool = False
     ) -> DataLoader:
         dataloader = DataLoader(
             self,
