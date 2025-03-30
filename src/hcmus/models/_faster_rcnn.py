@@ -61,7 +61,4 @@ class FasterRCNNWrapper:
                     mlflow.log_metrics({
                         "train_loss": running_loss
                     })
-                    model_path = f"model-{epoch}.pth"
-                    torch.save(self._model.state_dict, model_path)
-                    logger.info(f"Save new model at {model_path}")
                     mlflow.pytorch.log_model(self._model, "model")

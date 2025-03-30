@@ -10,7 +10,6 @@ class DataAugmentation:
         self.img_size = img_size
         self.device = torch.device(device)
         self.transforms = T.Compose([
-            T.RandomHorizontalFlip(p=0.5),
             T.RandomResizedCrop(size=img_size, scale=(0.8, 1.0)),
             T.RandomRotation(degrees=30),
             T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1)
@@ -21,11 +20,7 @@ class DataAugmentation:
         orig_w, orig_h = image.size
 
         for t in self.transforms.transforms:
-            if isinstance(t, T.RandomHorizontalFlip) and random.random() < t.p:
-                image = F.hflip(image)
-                boxes[:, [0, 2]] = orig_w - boxes[:, [2, 0]]
-
-            elif isinstance(t, T.RandomResizedCrop):
+            if isinstance(t, T.RandomResizedCrop):
                 i, j, h, w = T.RandomResizedCrop.get_params(image, scale=t.scale, ratio=(1.0, 1.0))
                 image = F.resized_crop(image, i, j, h, w, self.img_size)
 
