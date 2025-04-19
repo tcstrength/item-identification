@@ -56,12 +56,13 @@ class LbsDataset(Dataset):
 
         for task in to_download:
             for ann in task.annotations:
-                tmp = ann.result[0].value.rectanglelabels
-                if len(tmp) > 1:
-                    logger.warning(f"Unexpected labels: {tmp}")
-                tmp = tmp[0]
-                if tmp not in labels:
-                    labels[tmp] = len(labels)
+                for result in ann.result:
+                    tmp = result.value.rectanglelabels
+                    if len(tmp) > 1:
+                        logger.warning(f"Unexpected labels: {tmp}")
+                    tmp = tmp[0]
+                    if tmp not in labels:
+                        labels[tmp] = len(labels)
 
         # for task in tqdm(to_download, "Downloading images"):
         with ThreadPoolExecutor() as executor:
@@ -83,20 +84,22 @@ class LbsDataset(Dataset):
 
         for ann in task.annotations:
             ann = task.annotations[0]
-            rect = ann.result[0].value
-            label = rect.rectanglelabels[0]
-            label_idx = self._labels[label]
-            x_min = width * (rect.x / 100)
-            y_min = height * (rect.y / 100)
-            x_max = x_min + (width * (rect.width / 100))
-            y_max = y_min + (height * (rect.height / 100))
-            boxes.append([x_min, y_min, x_max, y_max])
-            labels.append(label_idx)
+            for result in ann.result:
+                rect = result.value
+                label = rect.rectanglelabels[0]
+                label_idx = self._labels[label]
+                x_min = width * (rect.x / 100)
+                y_min = height * (rect.y / 100)
+                x_max = x_min + (width * (rect.width / 100))
+                y_max = y_min + (height * (rect.height / 100))
+                boxes.append([x_min, y_min, x_max, y_max])
+                labels.append(label_idx)
 
         target = {
             "boxes": torch.tensor(boxes, dtype=torch.float32, device=self._device),
             "labels": torch.tensor(labels, dtype=torch.int64, device=self._device)
         }
+
         if self._augment:
             image, target = self._augment(image, target)
 

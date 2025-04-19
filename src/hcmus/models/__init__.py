@@ -1,1 +1,2 @@
-from hcmus.models._faster_rcnn import FasterRCNNWrapper
+from hcmus.models._knn_search_model import kNNSearchConfig
+from hcmus.models._knn_search_model import kNNSearchModel

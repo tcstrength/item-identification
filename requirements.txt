@@ -9,3 +9,8 @@ torch
 torchvision
 torchmetrics
 mlflow
+transformers
+ultralytics
+timm
+
+faiss-cpu
