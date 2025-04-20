@@ -20,10 +20,9 @@ class LabelStudioConnector:
         self._verbose = verbose
 
     def _build_endpoint(self, component: str) -> str:
-        endpoint_fmt = "{url}/api/projects/{project_id}/{component}"
+        endpoint_fmt = "{url}/api/{component}"
         endpoint = endpoint_fmt.format(
             url=self._url,
-            project_id=self._project_id,
             component=component
         )
         return endpoint
@@ -87,12 +86,39 @@ class LabelStudioConnector:
                 images.append(future.result())
         return images
 
+    def get_total_tasks(self) -> int:
+        endpoint = self._build_endpoint("projects")
+        response = requests.get(
+            endpoint,
+            headers=self._headers,
+            params={
+                "ids": self._project_id,
+                "include": "task_number"
+            }
+        )
+        data = response.json()
+        results = data.get("results")
+
+        if len(results) == 0:
+            logger.warning("No project found.")
+            return 0
+
+        return results[0].get("task_number")
+
     def get_tasks(self, page_from: int, page_to: int, page_size: int = 100) -> List[LabelStudioTask]:
         tasks = []
-        endpoint = self._build_endpoint("tasks")
+        component = f"projects/{self._project_id}/tasks"
+        endpoint = self._build_endpoint(component)
         page = page_from
-        bar = tqdm(range(page_from, page_to + 1), "Loading tasks")
+        total_tasks = self.get_total_tasks()
 
+        if (page_to - page_from + 1) * page_size > total_tasks:
+            logger.warning(
+                f"Page size is too large, only {total_tasks} tasks available."
+            )
+            page_to = total_tasks // page_size + 1
+
+        bar = tqdm(range(page_from, page_to + 1), "Loading tasks")
         for page in bar:
             response = requests.get(
                 endpoint,
