@@ -7,4 +7,10 @@ python-dotenv
 tqdm
 torch
 torchvision
-pycocotools
+torchmetrics
+mlflow
+transformers
+ultralytics
+timm
+
+faiss-cpu

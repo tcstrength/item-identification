@@ -1,1 +1,2 @@
-from hcmus.models._identification_model import IdentificationModel
+from hcmus.models._knn_search_model import kNNSearchConfig
+from hcmus.models._knn_search_model import kNNSearchModel

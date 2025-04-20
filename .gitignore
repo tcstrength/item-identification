@@ -3,6 +3,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Pytorch
+*.pth
+*.pt
+
 # C extensions
 *.so
 local/

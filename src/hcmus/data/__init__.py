@@ -1,3 +1,3 @@
-from hcmus.data._lbs_dataset import LbsDataset
+from hcmus.data._torch_dataset import TorchDataset
 
-__all__ = ["LbsDataset"]
+__all__ = ["TorchDataset"]
