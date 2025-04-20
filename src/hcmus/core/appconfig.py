@@ -16,16 +16,13 @@ def __get_torch_device():
         device = torch.device("cpu")
     return device
 
-def __get_project_root() -> Path:
-    return Path(__file__).parent.parent.parent.parent
-
 PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", "."))
 TORCH_DEVICE = __get_torch_device()
 LABEL_STUDIO_URL = os.environ.get("LABEL_STUDIO_URL")
 LABEL_STUDIO_API_KEY = os.environ.get("LABEL_STUDIO_API_KEY")
 LABEL_STUDIO_TEMP_DIR = PROJECT_ROOT.joinpath(os.environ.get("LABEL_STUDIO_TEMP_DIR", "local/temp/"))
 LABEL_STUDIO_PROJECT_MAPPING = json.loads(os.environ.get("LABEL_STUDIO_PROJECT_MAPPING"))
-IMPORT_DATA_DIR = Path(PROJECT_ROOT).joinpath(os.environ.get("IMPORT_DATA_DIR"))
+LABEL_STUDIO_IMPORT_DATA_DIR = Path(PROJECT_ROOT).joinpath(os.environ.get("LABEL_STUDIO_IMPORT_DATA_DIR", "local/import/"))
 
 MLFLOW_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI")
 MLFLOW_EXPERIMENT_NAME = os.environ.get("MLFLOW_EXPERIMENT_NAME")
