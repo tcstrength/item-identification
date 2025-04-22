@@ -1,7 +1,7 @@
-from curses import meta
 import numpy as np
 import torch
 import faiss
+from concurrent.futures import ThreadPoolExecutor
 from typing import List
 from tqdm import tqdm
 from pydantic import BaseModel
@@ -9,7 +9,7 @@ from torchvision.models.detection import fasterrcnn_resnet50_fpn
 from torchvision.transforms import ToTensor
 from transformers import CLIPProcessor, CLIPModel
 from PIL.Image import Image
-from hcmus.models._base_model import BasePredictor, ModelOutput
+from hcmus.models._base_model import ModelOutput
 
 
 UNKNOWN_LABEL = "unknown"
@@ -56,11 +56,20 @@ class kNNSearchModel:
             outputs = self._clip_model.get_image_features(**inputs)
         return outputs[0].cpu().numpy()
 
-    def _build_index(self, images: List[Image], dim: int) -> faiss.Index:
-        embeddings = []
+    def _build_index(self, images: List[Image], dim: int, num_workers: int = None) -> faiss.Index:
         index = faiss.IndexFlatL2(dim)
-        for image in tqdm(images, "Building index..."):
-            embeddings.append(self._get_embedding(image))
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            # Create a list to store futures
+            futures = [executor.submit(self._get_embedding, image) for image in images]
+
+            # Process results with tqdm for progress tracking
+            embeddings = []
+            for future in tqdm(futures, total=len(futures), desc="Building index..."):
+                result = future.result()
+                if result is None: continue
+                embeddings.append(result)
+
+        # Add all embeddings to the index at once
         index.add(np.array(embeddings))
         return index
 
