@@ -78,3 +78,4 @@ This README provides instructions for setting up the Python environment for this
 - Selective Search for Object Detection: https://www.geeksforgeeks.org/selective-search-for-object-detection-r-cnn/
 - YOLOv12: https://docs.ultralytics.com/models/yolo12/#citations-and-acknowledgements
 - Low Object Count: https://chatgpt.com/share/6804ca08-de5c-8001-9be8-402becd967b8
+- Contour-based Approach: https://citeseerx.ist.psu.edu/document?repid=rep1&type=pdf&doi=16b4468ae7e0e0193aa8593f8b3d4475b80c87e5

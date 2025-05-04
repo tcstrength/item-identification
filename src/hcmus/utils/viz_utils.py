@@ -1,5 +1,6 @@
 import textwrap
-from random import randint
+from typing import List, Tuple
+from PIL import Image
 from matplotlib import pyplot as plt
 from matplotlib import patches as patches
 
@@ -21,6 +22,19 @@ from matplotlib import patches as patches
 #         )
 #         ax.add_patch(rect)
 #     plt.show()
+
+def crop_image(image: Image.Image, boxes: List[Tuple[int]]):
+        sub_images = []
+        for box in boxes:
+            box = [int(coord) for coord in box]
+            sub_img = image.crop(box)
+            sub_images.append(sub_img)
+        return sub_images
+
+def plot_image(image):
+     plt.imshow(image)
+     plt.tight_layout()
+     plt.show()
 
 def draw_boxes(image, boxes: list, labels: list = None, figsize = (12, 8), max_label_width=20):
     fig, ax = plt.subplots(1, figsize=figsize)

@@ -105,7 +105,12 @@ class LabelStudioConnector:
 
         return results[0].get("task_number")
 
-    def get_tasks(self, page_from: int, page_to: int, page_size: int = 100) -> List[LabelStudioTask]:
+    def get_tasks(
+        self,
+        page_from: int = 1,
+        page_to: int = 100,
+        page_size: int = 100
+    ) -> List[LabelStudioTask]:
         tasks = []
         component = f"projects/{self._project_id}/tasks"
         endpoint = self._build_endpoint(component)
