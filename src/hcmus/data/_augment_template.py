@@ -1,3 +1,4 @@
+from re import A
 import cv2
 import numpy as np
 import random
@@ -126,15 +127,51 @@ class AugmentTemplate:
         return image, boxes
 
 
-    def place(self, background: np.array, boxes: List[Tuple[int]], objects: List[np.array]):
+    def place(
+        self,
+        background: np.array,
+        boxes: List[Tuple[int]],
+        objects: List[np.array],
+        labels: List[np.array]
+    ) -> np.array:
+        assert len(objects) == len(labels), (
+            "Number of objects and labels must be the same, given"
+            f" {len(object)} != {len(labels)}"
+        )
+
+        def match_brightness(obj_rgb, bg_patch):
+            obj_mean = np.mean(obj_rgb)
+            bg_mean = np.mean(bg_patch)
+            factor = bg_mean / (obj_mean + 1e-6)
+            return np.clip(obj_rgb * factor, 0, 255).astype(np.uint8)
+
+        def random_rotate(img, max_angle=8):
+            angle = random.uniform(-max_angle, max_angle)
+            h, w = img.shape[:2]
+            M = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
+            return cv2.warpAffine(img, M, (w, h), borderMode=cv2.BORDER_REFLECT)
+
+        def feather_alpha(obj, feather=5):
+            if obj.shape[2] == 4:
+                alpha = obj[:, :, 3].astype(np.float32) / 255
+                alpha = cv2.GaussianBlur(alpha, (feather*2+1, feather*2+1), 0)
+                obj[:, :, 3] = (alpha * 255).astype(np.uint8)
+            return obj
+
         bg = background.copy()
+        new_boxes = []
+        new_labels = []
         bg_h, bg_w = bg.shape[:2]
 
         for box in boxes:
             x1, y1, x2, y2 = map(int, box)
             bw, bh = x2 - x1, y2 - y1
 
-            obj = random.choice(objects)
+            idx = random.randrange(len(objects))
+            obj = objects[idx]
+            label = labels[idx]
+            obj = feather_alpha(obj.copy())
+            obj = random_rotate(obj)
 
             oh, ow = obj.shape[:2]
 
@@ -148,19 +185,24 @@ class AugmentTemplate:
             start_y = int(y1 + (bh - new_h) / 2)
             end_x, end_y = start_x + new_w, start_y + new_h
 
-            if start_x < 0 or start_y < 0 or end_x > bg_w or end_y > bg_h:
-                continue
+            new_boxes.append((start_x, start_y, end_x, end_y))
+            new_labels.append(label)
 
+            if start_x < 0 or start_y < 0 or end_x > bg_w or end_y > bg_h:
+                continue  # Skip if out of bounds
+
+            # Match brightness with background patch
             bg_patch = bg[start_y:end_y, start_x:end_x]
+            resized_obj_rgb = match_brightness(resized_obj[:, :, :3], bg_patch)
 
             if resized_obj.shape[2] == 4:
                 alpha = resized_obj[:, :, 3].astype(np.float32) / 255.0
                 for c in range(3):
                     bg[start_y:end_y, start_x:end_x, c] = (
-                        alpha * resized_obj[:, :, c] +
+                        alpha * resized_obj_rgb[:, :, c] +
                         (1 - alpha) * bg[start_y:end_y, start_x:end_x, c]
                     )
             else:
-                bg[start_y:end_y, start_x:end_x] = resized_obj
+                bg[start_y:end_y, start_x:end_x] = resized_obj_rgb
 
-        return bg
+        return bg, new_boxes, new_labels
