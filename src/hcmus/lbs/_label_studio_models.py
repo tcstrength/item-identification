@@ -7,7 +7,7 @@ class RectangleLabel(BaseModel):
     y: Optional[float] = None
     width: Optional[float] = None
     height: Optional[float] = None
-    rotation: Optional[int] = None
+    rotation: Optional[float] = None
     rectanglelabels: Optional[List[str]] = None
 
 class AnnotationResult(BaseModel):
