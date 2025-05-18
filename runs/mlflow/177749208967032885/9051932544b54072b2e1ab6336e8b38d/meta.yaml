@@ -1,0 +1,15 @@
+artifact_uri: /Volumes/Cucumber/Projects/item-identification/runs/mlflow/177749208967032885/9051932544b54072b2e1ab6336e8b38d/artifacts
+end_time: 1747493440465
+entry_point_name: ''
+experiment_id: '177749208967032885'
+lifecycle_stage: active
+run_id: 9051932544b54072b2e1ab6336e8b38d
+run_name: train6
+run_uuid: 9051932544b54072b2e1ab6336e8b38d
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1747484106449
+status: 3
+tags: []
+user_id: keith

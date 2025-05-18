@@ -112,7 +112,7 @@ def save_yolo_v8_dataset_from_dicts(
     random.shuffle(indices)
     split = int(len(data) * split_ratio)
 
-    for count, idx in enumerate(indices):
+    for count, idx in tqdm(enumerate(indices), "Convert to YOLO format"):
         item = data[idx]
         image = item['image']
         boxes = item['target']['boxes']
@@ -126,7 +126,8 @@ def save_yolo_v8_dataset_from_dicts(
         label_path = os.path.join(output_dir, f"labels/{split_type}", filename.replace('.jpg', '.txt'))
 
         # Save image
-        cv2.imwrite(img_path, image)
+        image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        cv2.imwrite(img_path, image_bgr)
 
         # Save label
         with open(label_path, 'w') as f:
