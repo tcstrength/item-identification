@@ -122,6 +122,7 @@ class LabelStudioConnector:
                 f"Page size is too large, only {total_tasks} tasks available."
             )
             page_to = total_tasks // page_size + 1
+            logger.info(f"New `page_to` applied: {page_to}")
 
         bar = tqdm(range(page_from, page_to + 1), "Loading tasks")
         for page in bar:
@@ -137,9 +138,11 @@ class LabelStudioConnector:
 
             page_tasks = response.json()
             page_tasks = [LabelStudioTask.model_validate(x) for x in page_tasks]
-            page_tasks = [x for x in page_tasks if x.is_labeled != 0]
+            # page_tasks = [x for x in page_tasks if x.is_labeled != 0]
+            # print(page_tasks)w
 
             if not page_tasks:
+                # logger.warning("Return empty.")
                 break
 
             tasks.extend(page_tasks)

@@ -180,3 +180,6 @@ cython_debug/
 
 # MLFlows
 runs/*
+
+notebook/*
+!notebook/*.ipynb
