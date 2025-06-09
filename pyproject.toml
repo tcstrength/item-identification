@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
+    "albumentations>=2.0.8",
     "faiss-cpu>=1.10.0",
     "keras>=3.9.2",
     "loguru>=0.7.3",
