@@ -42,6 +42,28 @@ class LabelStudioConnector:
                         labels[tmp] = len(labels)
         return labels
 
+    def transform_labels(
+        self,
+        dataset: List[Dict],
+        label2idx: Dict[str, int],
+        valid_labels: List[str],
+        default_label: str = "object"
+    ) -> List[Dict]:
+        """Transform labels in dataset downloaded from self.download_dataset"""
+        dataset = [x.copy() for x in dataset if x.get("target").get("labels")]
+        idx2label = {v: k for k, v in label2idx.items()}
+        for item in dataset:
+            new_labels = []
+            for idx in item.get("target").get("labels"):
+                label_str = idx2label[idx]
+                if label_str in valid_labels:
+                    new_labels.append(idx2label[idx])
+                else:
+                    # Compatible with SKU110k
+                    new_labels.append(default_label)
+            item.get("target")["labels"] = new_labels
+        return dataset
+
     def download_dataset(self, tasks: List[LabelStudioTask], labels: Dict[str, int] = None) -> List[Dict]:
         if labels is None:
             labels = self.extract_labels(tasks)

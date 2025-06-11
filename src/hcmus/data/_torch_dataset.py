@@ -1,10 +1,8 @@
 import torch
-from typing import List
+from typing import Dict, List
 from loguru import logger
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from torchvision import transforms as T
-from PIL import Image
-from tqdm import tqdm
+from PIL import Image, ImageOps
 from torch.utils.data import Dataset, DataLoader
 from hcmus.lbs import LabelStudioConnector
 
@@ -67,3 +65,63 @@ class TorchDataset(Dataset):
             collate_fn=lambda x: tuple(zip(*x))
         )
         return dataloader
+
+
+class CroppedObjectClassificationDataset(Dataset):
+    def __init__(self, data_list: List, label2idx: Dict=None, transforms=None, skip_labels=[]):
+        """
+        data_list: List of dicts with 'image' path and 'target' with 'boxes' and 'labels'.
+        transforms: Optional transforms applied to each cropped object.
+        """
+        self.samples = []
+        self.transforms = transforms
+        self.label2idx = label2idx
+
+        valid_labels = []
+        for entry in data_list:
+            labels = entry['target']['labels']
+            labels = [x for x in labels if x not in skip_labels]
+            valid_labels.extend(labels)
+
+        if label2idx is None:
+            self.label2idx = {v: k for k, v in enumerate(set(valid_labels))}
+            logger.info(f"Auto infer `label2idx` mapping, mapping length: {len(self.label2idx)}.")
+
+        self.idx2label = {v: k for v, k in self.label2idx.items()}
+
+        for entry in data_list:
+            img_path = entry['image']
+            boxes = entry['target']['boxes']
+            labels = entry['target']['labels']
+
+            for box, label in zip(boxes, labels):
+                if label in skip_labels:
+                    continue
+
+                labels.append(label)
+                self.samples.append({
+                    'image': img_path,
+                    'box': box,
+                    'label': self.label2idx[label]
+                })
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        sample = self.samples[idx]
+        img_path = sample['image']
+        box = sample['box']
+        label = sample['label']
+
+        image = Image.open(img_path).convert("RGB")
+        image = ImageOps.exif_transpose(image)
+
+        # Crop image based on box [x1, y1, x2, y2]
+        x1, y1, x2, y2 = map(int, box)
+        cropped = image.crop((x1, y1, x2, y2))
+
+        if self.transforms:
+            cropped = self.transforms(cropped)
+
+        return cropped, label
