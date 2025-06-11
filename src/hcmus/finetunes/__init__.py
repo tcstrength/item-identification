@@ -1,1 +1,0 @@
-from hcmus.finetunes._faster_rcnn import FasterRCNNWrapper

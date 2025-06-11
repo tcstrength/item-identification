@@ -2,7 +2,7 @@ import os
 import requests
 import hashlib
 from pathlib import Path
-from PIL import Image
+from PIL import Image, ImageOps
 from tqdm import tqdm
 from typing import List, Dict
 from loguru import logger
@@ -52,6 +52,7 @@ class LabelStudioConnector:
             tg_boxes = []
             tg_labels = []
             image = Image.open(path)
+            image = ImageOps.exif_transpose(image)
             width, height = image.size
 
             for ann in task.annotations:
