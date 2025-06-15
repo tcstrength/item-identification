@@ -6,6 +6,9 @@ readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     "albumentations>=2.0.8",
+    "clip>=0.2.0",
+    "easyfsl>=1.5.0",
+    "easyocr>=1.7.2",
     "faiss-cpu>=1.10.0",
     "keras>=3.9.2",
     "loguru>=0.7.3",
@@ -23,3 +26,6 @@ dependencies = [
     "transformers>=4.51.3",
     "ultralytics>=8.3.111",
 ]
+
+[tool.uv.sources]
+clip = { git = "https://github.com/openai/CLIP.git" }
