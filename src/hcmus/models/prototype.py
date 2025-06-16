@@ -1,4 +1,3 @@
-from gc import freeze
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,9 +7,9 @@ class CLIPViTBackbone(nn.Module):
     """
     ViT-B/16 backbone using CLIP's pre-trained model
     """
-    def __init__(self, freeze_backbone: bool = True):
+    def __init__(self, backbone_name: str = "ViT-B/16", freeze_backbone: bool = True):
         super().__init__()
-        self.model, self.preprocess = clip.load("ViT-B/16", device="cuda" if torch.cuda.is_available() else "cpu")
+        self.model, self.preprocess = clip.load(backbone_name, device="cuda" if torch.cuda.is_available() else "cpu")
 
         # Extract the visual encoder
         self.visual_encoder = self.model.visual
@@ -20,7 +19,15 @@ class CLIPViTBackbone(nn.Module):
                 param.requires_grad = False
 
         # Feature dimension for ViT-B/16
-        self.feature_dim = 512
+        if "ViT-B" in backbone_name:
+            self.feature_dim = 512
+        elif "ViT-L" in backbone_name:
+            self.feature_dim = 768
+        elif "RN50" in backbone_name:
+            self.feature_dim = 1024
+        elif "RN101" in backbone_name:
+            self.feature_dim = 512
+
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -39,14 +46,13 @@ class OpenWorldPrototypicalNetwork(nn.Module):
     def __init__(
         self,
         backbone: nn.Module,
-        feature_dim: int = 512,
         temperature: float = 1.0,
         unknown_threshold: float = 0.5,
         use_cosine_similarity: bool = True
     ):
         super().__init__()
         self.backbone = backbone
-        self.feature_dim = feature_dim
+        self.feature_dim = backbone.feature_dim
         self.temperature = temperature
         self.unknown_threshold = unknown_threshold
         self.use_cosine_similarity = use_cosine_similarity
@@ -56,10 +62,10 @@ class OpenWorldPrototypicalNetwork(nn.Module):
 
         # Optional projection head for fine-tuning
         self.projection_head = nn.Sequential(
-            nn.Linear(feature_dim, feature_dim),
+            nn.Linear(self.feature_dim, self.feature_dim),
             nn.ReLU(),
             nn.Dropout(0.1),
-            nn.Linear(feature_dim, feature_dim)
+            nn.Linear(self.feature_dim, self.feature_dim)
         )
 
     def compute_prototypes(self, support_features: torch.Tensor, support_labels: torch.Tensor) -> torch.Tensor:
@@ -311,17 +317,16 @@ class OpenWorldTrainer:
                 }
 
 # Usage example
-def create_model(freeze_backbone: bool):
+def create_model(backbone_name, freeze_backbone: bool):
     """
     Create the complete model
     """
     # Initialize backbone
-    backbone = CLIPViTBackbone(freeze_backbone=freeze)
+    backbone = CLIPViTBackbone(backbone_name, freeze_backbone=freeze_backbone)
 
     # Create open-world prototypical network
     model = OpenWorldPrototypicalNetwork(
         backbone=backbone,
-        feature_dim=512,
         temperature=1.0,
         unknown_threshold=0.6,
         use_cosine_similarity=True
@@ -329,11 +334,11 @@ def create_model(freeze_backbone: bool):
 
     return model
 
-def setup_training(freeze_backbone: bool):
+def setup_training(backbone_name, freeze_backbone: bool):
     """
     Setup training configuration
     """
-    model = create_model(freeze_backbone)
+    model = create_model(backbone_name, freeze_backbone)
     trainer = OpenWorldTrainer(model)
 
     # Optimizer
