@@ -1,659 +1,365 @@
+from gc import freeze
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import timm
-import numpy as np
-import torchvision.transforms as transforms
-import mlflow
-from typing import Dict, List, Tuple, Optional
-from tqdm import tqdm
-from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, classification_report
-from torch.utils.data import DataLoader, Dataset
-from sklearn.cluster import DBSCAN
-from sklearn.metrics import silhouette_score
-import warnings
-warnings.filterwarnings('ignore')
+import clip
 
-
-AVAILABLE_BACKBONES = {
-    'lightweight': [
-        'mobilenetv3_large_100',
-        'efficientnet_b0',
-        'resnet18'
-    ],
-    'balanced': [
-        'resnet50',
-        'efficientnet_b3',
-        'regnety_032',
-        'convnext_tiny'
-    ],
-    'high_performance': [
-        'resnet101',
-        'efficientnet_b5',
-        'convnext_base',
-        'swin_base_patch4_window7_224',
-        'vit_base_patch16_224'
-    ],
-    'state_of_the_art': [
-        'convnext_large',
-        'swin_large_patch4_window7_224',
-        'vit_large_patch16_224',
-        'eva_large_patch14_196'
-    ]
-}
-
-
-class PrototypicalNetwork(nn.Module):
+class CLIPViTBackbone(nn.Module):
     """
-    Prototypical Network for few-shot learning with open-world capability.
+    ViT-B/16 backbone using CLIP's pre-trained model
     """
-    def __init__(self, backbone_name: str = 'resnet50', embedding_dim: int = 512,
-                 dropout_rate: float = 0.1):
+    def __init__(self, freeze_backbone: bool = True):
         super().__init__()
+        self.model, self.preprocess = clip.load("ViT-B/16", device="cuda" if torch.cuda.is_available() else "cpu")
 
-        # Load pretrained backbone
-        self.backbone = timm.create_model(
-            backbone_name,
-            pretrained=True,
-            num_classes=0,  # Remove classifier head
-            global_pool='avg'
-        )
+        # Extract the visual encoder
+        self.visual_encoder = self.model.visual
 
-        # Get backbone output dimension
-        backbone_dim = self.backbone.num_features
+        if freeze_backbone:
+            for param in self.visual_encoder.parameters():
+                param.requires_grad = False
 
-        # Projection head for embedding
-        self.projector = nn.Sequential(
-            nn.Linear(backbone_dim, embedding_dim * 2),
-            nn.ReLU(),
-            nn.Dropout(dropout_rate),
-            nn.Linear(embedding_dim * 2, embedding_dim),
-            nn.BatchNorm1d(embedding_dim)
-        )
+        # Feature dimension for ViT-B/16
+        self.feature_dim = 512
 
-        self.embedding_dim = embedding_dim
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass through ViT backbone
+        Args:
+            x: Input tensor of shape (batch_size, 3, 224, 224)
+        Returns:
+            Feature tensor of shape (batch_size, 512)
+        """
+        return self.visual_encoder(x)
 
-    def forward(self, x):
-        """Forward pass to get embeddings."""
-        features = self.backbone(x)
-        embeddings = self.projector(features)
-        return F.normalize(embeddings, dim=1)  # L2 normalize
-
-
-class OpenWorldFewShotClassifier(nn.Module):
+class OpenWorldPrototypicalNetwork(nn.Module):
     """
-    Open-world few-shot classifier that can:
-    1. Classify known classes using prototypes
-    2. Detect unknown/novel classes
-    3. Adapt to new classes with few examples
+    Prototypical Network with Open World capabilities using ViT-B/16
     """
-
-    def __init__(self, backbone_name: str = 'resnet50', embedding_dim: int = 512,
-                 temperature: float = 10.0, unknown_threshold: float = 0.5):
+    def __init__(
+        self,
+        backbone: nn.Module,
+        feature_dim: int = 512,
+        temperature: float = 1.0,
+        unknown_threshold: float = 0.5,
+        use_cosine_similarity: bool = True
+    ):
         super().__init__()
-
-        self.feature_extractor = PrototypicalNetwork(backbone_name, embedding_dim)
+        self.backbone = backbone
+        self.feature_dim = feature_dim
         self.temperature = temperature
         self.unknown_threshold = unknown_threshold
-        self.prototypes = {}  # Store class prototypes
-        self.class_names = []
-        self.embedding_dim = embedding_dim
+        self.use_cosine_similarity = use_cosine_similarity
 
-        # Outlier detection parameters
-        self.outlier_detector = None
-        self.fit_outlier_detector = True
+        # Learnable temperature parameter
+        self.learnable_temp = nn.Parameter(torch.tensor(temperature))
 
-    def compute_prototypes(self, support_embeddings: torch.Tensor,
-                          support_labels: torch.Tensor) -> Dict[int, torch.Tensor]:
-        """Compute prototypes for each class in support set."""
-        prototypes = {}
-        unique_labels = torch.unique(support_labels)
+        # Optional projection head for fine-tuning
+        self.projection_head = nn.Sequential(
+            nn.Linear(feature_dim, feature_dim),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(feature_dim, feature_dim)
+        )
 
-        for label in unique_labels:
-            label_mask = support_labels == label
-            class_embeddings = support_embeddings[label_mask]
-            # Prototype is the mean of support embeddings for this class
-            prototypes[label.item()] = torch.mean(class_embeddings, dim=0)
+    def compute_prototypes(self, support_features: torch.Tensor, support_labels: torch.Tensor) -> torch.Tensor:
+        """
+        Compute class prototypes from support set
+        Args:
+            support_features: (n_support, feature_dim)
+            support_labels: (n_support,)
+        Returns:
+            prototypes: (n_classes, feature_dim)
+        """
+        n_classes = support_labels.max().item() + 1
+        prototypes = torch.zeros(n_classes, self.feature_dim, device=support_features.device)
+
+        for class_id in range(n_classes):
+            class_mask = support_labels == class_id
+            if class_mask.sum() > 0:
+                prototypes[class_id] = support_features[class_mask].mean(dim=0)
 
         return prototypes
 
-    def compute_distances(self, query_embeddings: torch.Tensor,
-                         prototypes: Dict[int, torch.Tensor]) -> torch.Tensor:
-        """Compute distances between queries and prototypes."""
-        n_queries = query_embeddings.size(0)
-        n_classes = len(prototypes)
+    def compute_distances(self, query_features: torch.Tensor, prototypes: torch.Tensor) -> torch.Tensor:
+        """
+        Compute distances between queries and prototypes
+        """
+        if self.use_cosine_similarity:
+            # Normalize features and prototypes
+            query_norm = F.normalize(query_features, dim=1)
+            proto_norm = F.normalize(prototypes, dim=1)
 
-        distances = torch.zeros(n_queries, n_classes, device=query_embeddings.device)
-
-        for i, (class_id, prototype) in enumerate(prototypes.items()):
+            # Compute cosine similarity (convert to distance)
+            similarities = torch.mm(query_norm, proto_norm.t())
+            distances = 1 - similarities
+        else:
             # Euclidean distance
-            distances[:, i] = torch.norm(query_embeddings - prototype.unsqueeze(0), dim=1)
+            distances = torch.cdist(query_features, prototypes, p=2)
 
         return distances
 
-    def detect_unknown_classes(self, query_embeddings: torch.Tensor,
-                              prototypes: Dict[int, torch.Tensor]) -> torch.Tensor:
-        """Detect unknown/novel classes using distance-based thresholding."""
-        if not prototypes:
-            return torch.ones(query_embeddings.size(0), dtype=torch.bool)
-
-        distances = self.compute_distances(query_embeddings, prototypes)
-        min_distances = torch.min(distances, dim=1)[0]
-
-        # Points with distance > threshold are considered unknown
+    def detect_unknown(self, distances: torch.Tensor) -> torch.Tensor:
+        """
+        Detect unknown/novel classes based on distance threshold
+        Args:
+            distances: (n_query, n_classes)
+        Returns:
+            unknown_mask: (n_query,) boolean tensor
+        """
+        min_distances = distances.min(dim=1)[0]
         unknown_mask = min_distances > self.unknown_threshold
-
         return unknown_mask
 
-    def cluster_unknown_samples(self, unknown_embeddings: torch.Tensor,
-                              eps: float = 0.3, min_samples: int = 2) -> np.ndarray:
-        """Cluster unknown samples to discover potential new classes."""
-        if len(unknown_embeddings) < min_samples:
-            return np.array([-1] * len(unknown_embeddings))
-
-        # Use DBSCAN for clustering
-        clustering = DBSCAN(eps=eps, min_samples=min_samples, metric='cosine')
-        cluster_labels = clustering.fit_predict(unknown_embeddings.cpu().numpy())
-
-        return cluster_labels
-
-    def forward(self, support_images: torch.Tensor, support_labels: torch.Tensor,
-                query_images: torch.Tensor, return_embeddings: bool = False):
+    def forward(
+        self,
+        support_images: torch.Tensor,
+        support_labels: torch.Tensor,
+        query_images: torch.Tensor,
+        return_features: bool = False
+    ) -> dict:
         """
-        Forward pass for few-shot classification.
-
-        Args:
-            support_images: Support set images [N_support, C, H, W]
-            support_labels: Support set labels [N_support]
-            query_images: Query set images [N_query, C, H, W]
-            return_embeddings: Whether to return embeddings
+        Forward pass for few-shot classification with open-world detection
         """
-        # Extract embeddings
-        support_embeddings = self.feature_extractor(support_images)
-        query_embeddings = self.feature_extractor(query_images)
+        # Extract features
+        support_features = self.backbone(support_images)
+        query_features = self.backbone(query_images)
+
+        # Apply projection head
+        support_features = self.projection_head(support_features)
+        query_features = self.projection_head(query_features)
 
         # Compute prototypes
-        prototypes = self.compute_prototypes(support_embeddings, support_labels)
+        prototypes = self.compute_prototypes(support_features, support_labels)
 
-        # Detect unknown classes
-        unknown_mask = self.detect_unknown_classes(query_embeddings, prototypes)
+        # Compute distances
+        distances = self.compute_distances(query_features, prototypes)
 
-        # Compute distances and logits for known classes
-        distances = self.compute_distances(query_embeddings, prototypes)
-        logits = -distances * self.temperature
+        # Convert distances to logits
+        logits = -distances / self.learnable_temp
 
-        # Handle unknown samples
-        unknown_embeddings = query_embeddings[unknown_mask]
-        novel_clusters = None
-        if len(unknown_embeddings) > 0:
-            novel_clusters = self.cluster_unknown_samples(unknown_embeddings)
+        # Detect unknown samples
+        unknown_mask = self.detect_unknown(distances)
+
+        # Compute probabilities
+        probs = F.softmax(logits, dim=1)
+
+        # Apply unknown detection (set probabilities to uniform for unknown samples)
+        n_classes = prototypes.shape[0]
+        unknown_prob = 1.0 / (n_classes + 1)  # +1 for unknown class
+
+        # Create final predictions including unknown class
+        final_probs = torch.zeros(query_features.shape[0], n_classes + 1, device=query_features.device)
+        final_probs[:, :-1] = probs * (~unknown_mask).float().unsqueeze(1)
+        final_probs[:, -1] = unknown_mask.float()
+
+        # Normalize probabilities
+        final_probs = final_probs / final_probs.sum(dim=1, keepdim=True)
 
         results = {
             'logits': logits,
+            'probabilities': final_probs,
+            'distances': distances,
             'unknown_mask': unknown_mask,
-            'novel_clusters': novel_clusters,
             'prototypes': prototypes
         }
 
-        if return_embeddings:
-            results['query_embeddings'] = query_embeddings
-            results['support_embeddings'] = support_embeddings
+        if return_features:
+            results['support_features'] = support_features
+            results['query_features'] = query_features
 
         return results
 
-    def predict(self, support_images: torch.Tensor, support_labels: torch.Tensor,
-                query_images: torch.Tensor) -> Dict:
-        """Make predictions on query images."""
-        self.eval()
-        with torch.no_grad():
-            results = self.forward(support_images, support_labels, query_images)
-
-            # Get predictions for known classes
-            probabilities = F.softmax(results['logits'], dim=1)
-            predicted_classes = torch.argmax(probabilities, dim=1)
-
-            # Mark unknown samples
-            predicted_classes[results['unknown_mask']] = -1  # -1 for unknown
-
-            return {
-                'predictions': predicted_classes,
-                'probabilities': probabilities,
-                'unknown_mask': results['unknown_mask'],
-                'novel_clusters': results['novel_clusters']
-            }
-
-
 class OpenWorldTrainer:
-    """Trainer for open-world few-shot learning."""
-
-    def __init__(self, model: OpenWorldFewShotClassifier, device: torch.device):
+    """
+    Trainer for Open World Prototypical Networks
+    """
+    def __init__(
+        self,
+        model: OpenWorldPrototypicalNetwork,
+        device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    ):
         self.model = model.to(device)
         self.device = device
 
-    def episodic_train_step(self, support_images: torch.Tensor, support_labels: torch.Tensor,
-                           query_images: torch.Tensor, query_labels: torch.Tensor):
-        """Single episodic training step."""
-        self.model.train()
-
-        results = self.model(support_images, support_labels, query_images)
-
-        # Compute loss only for known classes (not unknown)
-        known_mask = ~results['unknown_mask']
+    def compute_loss(
+        self,
+        logits: torch.Tensor,
+        labels: torch.Tensor,
+        unknown_mask: torch.Tensor,
+        alpha: float = 0.5
+    ) -> torch.Tensor:
+        """
+        Compute combined loss for known and unknown samples
+        """
+        # Classification loss for known samples
+        known_mask = ~unknown_mask
         if known_mask.sum() > 0:
-            known_logits = results['logits'][known_mask]
-            known_labels = query_labels[known_mask]
-            loss = F.cross_entropy(known_logits, known_labels)
+            ce_loss = F.cross_entropy(logits[known_mask], labels[known_mask])
         else:
-            loss = torch.tensor(0.0, device=self.device, requires_grad=True)
+            ce_loss = torch.tensor(0.0, device=self.device)
 
-        return loss, results
+        # Unknown detection loss (encourage high distances for unknown samples)
+        # This is a simplified version - you might want to use more sophisticated losses
+        unknown_loss = torch.tensor(0.0, device=self.device)
 
-    def train_epoch(self, dataloader: DataLoader, optimizer: torch.optim.Optimizer,
-                   n_way: int = 5, n_shot: int = 5, n_query: int = 15):
-        """Train for one epoch using episodic training."""
-        total_loss = 0.0
-        total_acc = 0.0
-        num_episodes = 0
+        total_loss = alpha * ce_loss + (1 - alpha) * unknown_loss
+        return total_loss
 
-        for batch_idx, batch in enumerate(dataloader):
-            # Create episodes from batch
-            episode = self.create_episode(batch, n_way, n_shot, n_query)
-            if episode is None:
-                continue
-
-            support_images, support_labels, query_images, query_labels = episode
-
-            optimizer.zero_grad()
-            loss, results = self.episodic_train_step(
-                support_images, support_labels, query_images, query_labels
-            )
-
-            if loss.requires_grad:
-                loss.backward()
-                optimizer.step()
-
-            # Calculate accuracy for known samples
-            known_mask = ~results['unknown_mask']
-            if known_mask.sum() > 0:
-                predictions = torch.argmax(results['logits'][known_mask], dim=1)
-                accuracy = (predictions == query_labels[known_mask]).float().mean()
-                total_acc += accuracy.item()
-
-            total_loss += loss.item()
-            num_episodes += 1
-
-        return total_loss / num_episodes, total_acc / num_episodes
-
-    def create_episode(self, batch, n_way: int, n_shot: int, n_query: int):
-        """Create an episode from a batch of data."""
-        images, labels = batch
-        images, labels = images.to(self.device), labels.to(self.device)
-
-        unique_labels = torch.unique(labels)
-
-        if len(unique_labels) < n_way:
-            return None
-
-        # Sample n_way classes
-        selected_classes = unique_labels[torch.randperm(len(unique_labels))[:n_way]]
-
-        support_images, support_labels = [], []
-        query_images, query_labels = [], []
-
-        for i, class_label in enumerate(selected_classes):
-            class_mask = labels == class_label
-            class_images = images[class_mask]
-
-            if len(class_images) < n_shot + n_query:
-                continue
-
-            # Randomly sample support and query
-            indices = torch.randperm(len(class_images))
-
-            support_indices = indices[:n_shot]
-            query_indices = indices[n_shot:n_shot + n_query]
-
-            support_images.append(class_images[support_indices])
-            support_labels.extend([i] * n_shot)  # Use episode-specific labels
-
-            query_images.append(class_images[query_indices])
-            query_labels.extend([i] * n_query)
-
-        if len(support_images) == 0:
-            return None
-
-        support_images = torch.cat(support_images, dim=0)
-        support_labels = torch.tensor(support_labels, device=self.device)
-        query_images = torch.cat(query_images, dim=0)
-        query_labels = torch.tensor(query_labels, device=self.device)
-
-        return support_images, support_labels, query_images, query_labels
-
-
-class OpenWorldTrainerEvaluator:
-    """Complete trainer and evaluator for open-world few-shot learning."""
-
-    def __init__(self, model, device, experiment_id: int):
-        self.model = model.to(device)
-        self.device = device
-        self.history = {'train_loss': [], 'train_acc': [], 'val_metrics': []}
-
-    def train_episode(self, train_dataset, n_way=5, n_shot=5, n_query=10):
-        """Train on a single episode."""
+    def train_episode(
+        self,
+        support_images: torch.Tensor,
+        support_labels: torch.Tensor,
+        query_images: torch.Tensor,
+        query_labels: torch.Tensor,
+        optimizer: torch.optim.Optimizer
+    ) -> dict:
+        """
+        Train on a single episode
+        """
         self.model.train()
-
-        # Create episode from training data (only known classes)
-        support_images, support_labels, query_images, query_labels = \
-            train_dataset.create_few_shot_episode(n_way, n_shot, n_query, include_unknown=False)
-
-        # Convert to tensors
-        support_images = torch.stack([train_dataset.transform(img) for img in support_images]).to(self.device)
-        support_labels = torch.tensor(support_labels).to(self.device)
-        query_images = torch.stack([train_dataset.transform(img) for img in query_images]).to(self.device)
-        query_labels = torch.tensor(query_labels).to(self.device)
+        optimizer.zero_grad()
 
         # Forward pass
         results = self.model(support_images, support_labels, query_images)
 
-        # Compute loss (only for known classes)
-        loss = F.cross_entropy(results['logits'], query_labels)
+        # Compute loss (assuming all query samples are known for now)
+        unknown_mask = torch.zeros(query_labels.shape[0], dtype=torch.bool, device=self.device)
+        loss = self.compute_loss(results['logits'], query_labels, unknown_mask)
+
+        # Backward pass
+        loss.backward()
+        optimizer.step()
 
         # Compute accuracy
-        predictions = torch.argmax(results['logits'], dim=1)
-        accuracy = (predictions == query_labels).float().mean().item()
+        predictions = results['probabilities'][:, :-1].argmax(dim=1)  # Exclude unknown class
+        accuracy = (predictions == query_labels).float().mean()
 
-        return loss, accuracy, len(query_labels)
+        return {
+            'train_loss': loss.item(),
+            'train_accuracy': accuracy.item()
+        }
 
-    def train_epoch(self, train_dataset, optimizer, n_episodes=100,
-                   n_way=5, n_shot=5, n_query=10):
-        """Train for one epoch."""
-        total_loss = 0.0
-        total_accuracy = 0.0
-        total_samples = 0
-
-        pbar = tqdm(range(n_episodes), desc="Training Episodes")
-
-        for episode in pbar:
-            optimizer.zero_grad()
-
-            try:
-                loss, accuracy, n_samples = self.train_episode(
-                    train_dataset, n_way, n_shot, n_query
-                )
-
-                loss.backward()
-                optimizer.step()
-
-                total_loss += loss.item()
-                total_accuracy += accuracy * n_samples
-                total_samples += n_samples
-
-                pbar.set_postfix({
-                    'Loss': f'{loss.item():.4f}',
-                    'Acc': f'{accuracy:.4f}'
-                })
-
-            except Exception as e:
-                print(f"Episode {episode} failed: {e}")
-                continue
-
-        avg_loss = total_loss / n_episodes
-        avg_accuracy = total_accuracy / total_samples if total_samples > 0 else 0
-
-        return avg_loss, avg_accuracy
-
-    def evaluate_open_world(self, test_dataset, n_way=5, n_shot=5, n_query=10,
-                           n_episodes=100, adjust_threshold=True):
-        """Evaluate on test dataset with unknown classes."""
+    def evaluate_episode(
+        self,
+        support_images: torch.Tensor,
+        support_labels: torch.Tensor,
+        query_images: torch.Tensor,
+        query_labels: torch.Tensor,
+        has_unknown: bool = False
+    ) -> dict:
+        """
+        Evaluate on a single episode
+        """
         self.model.eval()
 
-        all_predictions = []
-        all_true_labels = []
-        all_confidences = []
-
-        print("Evaluating open-world performance...")
-
         with torch.no_grad():
-            for episode in tqdm(range(n_episodes), desc="Test Episodes"):
-                try:
-                    # Create episode with unknown samples
-                    support_images, support_labels, query_images, query_labels = \
-                        test_dataset.create_few_shot_episode(
-                            n_way, n_shot, n_query, include_unknown=True
-                        )
+            results = self.model(support_images, support_labels, query_images)
 
-                    # Convert to tensors
-                    support_images = torch.stack([test_dataset.transform(img) for img in support_images]).to(self.device)
-                    support_labels = torch.tensor(support_labels).to(self.device)
-                    query_images = torch.stack([test_dataset.transform(img) for img in query_images]).to(self.device)
-                    query_labels = torch.tensor(query_labels).to(self.device)
+            # Get predictions (including unknown class)
+            predictions = results['probabilities'].argmax(dim=1)
+            n_classes = support_labels.max().item() + 1
 
-                    # Get predictions
-                    results = self.model.predict(support_images, support_labels, query_images)
+            # Compute metrics
+            if has_unknown:
+                unknown_class_id = n_classes
 
-                    predictions = results['predictions'].cpu().numpy()
-                    probabilities = results['probabilities'].cpu().numpy()
-                    unknown_mask = results['unknown_mask'].cpu().numpy()
+                known_mask = (query_labels >= 0)
+                unknown_mask = (query_labels == -1)
+                # Calculate accuracy for known classes
+                known_queries = predictions[known_mask]
+                known_true_labels = query_labels[known_mask]
+                known_accuracy = (known_queries == known_true_labels).float().mean() if known_mask.sum() > 0 else 0.0
 
-                    # Convert episode labels back to predictions
-                    final_predictions = []
-                    confidences = []
+                # Calculate unknown detection metrics
+                unknown_queries = predictions[unknown_mask]
+                unknown_detected_correctly = (unknown_queries == unknown_class_id).sum().item()
+                total_unknown = unknown_mask.sum().item()
+                unknown_recall = unknown_detected_correctly / total_unknown if total_unknown > 0 else 0.0
 
-                    for i, (pred, prob, is_unknown) in enumerate(zip(predictions, probabilities, unknown_mask)):
-                        if is_unknown or pred == -1:
-                            final_predictions.append(-1)  # Unknown
-                            confidences.append(0.0)
-                        else:
-                            final_predictions.append(pred)
-                            confidences.append(np.max(prob))
+                # Calculate false positive rate (known samples predicted as unknown)
+                known_predicted_as_unknown = (predictions[known_mask] == unknown_class_id).sum().item()
+                total_known = known_mask.sum().item()
+                false_positive_rate = known_predicted_as_unknown / total_known if total_known > 0 else 0.0
 
-                    all_predictions.extend(final_predictions)
-                    all_true_labels.extend(query_labels.cpu().numpy())
-                    all_confidences.extend(confidences)
+                # Overall accuracy including unknown detection
+                correct_known = (predictions[known_mask] == query_labels[known_mask]).sum().item()
+                correct_unknown = unknown_detected_correctly
+                total_queries = len(query_labels)
 
-                except Exception as e:
-                    print(f"Evaluation episode {episode} failed: {e}")
-                    continue
+                overall_accuracy = (correct_known + correct_unknown) / total_queries
 
-        # Compute metrics
-        metrics = self.compute_open_world_metrics(
-            all_true_labels, all_predictions, all_confidences
-        )
+                return {
+                    'val_accuracy': overall_accuracy,
+                    'known_accuracy': known_accuracy,
+                    'unknown_recall': unknown_recall,
+                    'false_positive_rate': false_positive_rate,
+                    # 'predictions': predictions,
+                    # 'unknown_detected': (predictions == n_classes).sum().item()
+                }
 
-        return metrics
-
-    def compute_open_world_metrics(self, y_true, y_pred, confidences):
-        """Compute comprehensive open-world metrics."""
-        y_true = np.array(y_true)
-        y_pred = np.array(y_pred)
-        confidences = np.array(confidences)
-
-        # Separate known and unknown samples
-        known_mask = y_true != -1
-        unknown_mask = y_true == -1
-
-        metrics = {}
-
-        # Overall accuracy
-        metrics['overall_accuracy'] = accuracy_score(y_true, y_pred)
-
-        # Known class accuracy (excluding unknown samples)
-        if known_mask.sum() > 0:
-            known_true = y_true[known_mask]
-            known_pred = y_pred[known_mask]
-            metrics['known_accuracy'] = accuracy_score(known_true, known_pred)
-        else:
-            metrics['known_accuracy'] = 0.0
-
-        # Unknown detection metrics
-        if unknown_mask.sum() > 0:
-            # True positives: unknown samples correctly identified as unknown
-            unknown_detected = (y_pred[unknown_mask] == -1).sum()
-            metrics['unknown_recall'] = unknown_detected / unknown_mask.sum()
-
-            # False positives: known samples incorrectly identified as unknown
-            total_predicted_unknown = (y_pred == -1).sum()
-
-            if total_predicted_unknown > 0:
-                metrics['unknown_precision'] = unknown_detected / total_predicted_unknown
             else:
-                metrics['unknown_precision'] = 0.0
+                # Standard few-shot evaluation
+                known_predictions = predictions[predictions < n_classes]
+                known_labels = query_labels[predictions < n_classes]
+                accuracy = (known_predictions == known_labels).float().mean() if len(known_predictions) > 0 else 0.0
 
-            # F1 score for unknown detection
-            if metrics['unknown_precision'] + metrics['unknown_recall'] > 0:
-                metrics['unknown_f1'] = 2 * (metrics['unknown_precision'] * metrics['unknown_recall']) / \
-                                       (metrics['unknown_precision'] + metrics['unknown_recall'])
-            else:
-                metrics['unknown_f1'] = 0.0
-        else:
-            metrics['unknown_recall'] = 0.0
-            metrics['unknown_precision'] = 0.0
-            metrics['unknown_f1'] = 0.0
+                return {
+                    'accuracy': accuracy.item(),  # Placeholder
+                    # 'predictions': predictions,
+                    # 'unknown_detected': (predictions == n_classes).sum().item()
+                }
 
-        # H-measure (Harmonic mean of known accuracy and unknown recall)
-        if metrics['known_accuracy'] + metrics['unknown_recall'] > 0:
-            metrics['h_measure'] = 2 * metrics['known_accuracy'] * metrics['unknown_recall'] / \
-                                  (metrics['known_accuracy'] + metrics['unknown_recall'])
-        else:
-            metrics['h_measure'] = 0.0
+# Usage example
+def create_model(freeze_backbone: bool):
+    """
+    Create the complete model
+    """
+    # Initialize backbone
+    backbone = CLIPViTBackbone(freeze_backbone=freeze)
 
-        # Confidence statistics
-        metrics['avg_confidence'] = np.mean(confidences)
-        metrics['confidence_std'] = np.std(confidences)
+    # Create open-world prototypical network
+    model = OpenWorldPrototypicalNetwork(
+        backbone=backbone,
+        feature_dim=512,
+        temperature=1.0,
+        unknown_threshold=0.6,
+        use_cosine_similarity=True
+    )
 
-        return metrics
+    return model
 
-    def train_full(self, train_dataset, test_dataset, optimizer, scheduler=None,
-                   n_epochs=50, n_episodes_per_epoch=100, n_way=5, n_shot=5, n_query=10,
-                   eval_every=5, save_best=True):
-        """Complete training loop with evaluation."""
+def setup_training(freeze_backbone: bool):
+    """
+    Setup training configuration
+    """
+    model = create_model(freeze_backbone)
+    trainer = OpenWorldTrainer(model)
 
-        best_h_measure = 0.0
+    # Optimizer
+    optimizer = torch.optim.AdamW(
+        filter(lambda p: p.requires_grad, model.parameters()),
+        lr=1e-4,
+        weight_decay=1e-5
+    )
 
-        print(f"Starting training for {n_epochs} epochs...")
-        print(f"Episodes per epoch: {n_episodes_per_epoch}")
-        print(f"Few-shot setup: {n_way}-way {n_shot}-shot with {n_query} queries")
+    # Learning rate scheduler
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1000, gamma=0.9)
 
-        for epoch in range(n_epochs):
-            print(f"\nEpoch {epoch+1}/{n_epochs}")
+    return model, trainer, optimizer, scheduler
 
-            # Training
-            train_loss, train_acc = self.train_epoch(
-                train_dataset, optimizer, n_episodes_per_epoch, n_way, n_shot, n_query
-            )
-
-            print(f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}")
-
-            self.history['train_loss'].append(train_loss)
-            self.history['train_acc'].append(train_acc)
-            mlflow.log_metrics({
-                "train_loss": train_loss,
-                "train_acc": train_acc
-            })
-
-            # Evaluation
-            if (epoch + 1) % eval_every == 0:
-                eval_metrics = self.evaluate_open_world(
-                    test_dataset, n_way, n_shot, n_query, n_episodes=50
-                )
-
-                print(f"Evaluation Results:")
-                print(f"  Overall Accuracy: {eval_metrics['overall_accuracy']:.4f}")
-                print(f"  Known Accuracy: {eval_metrics['known_accuracy']:.4f}")
-                print(f"  Unknown Recall: {eval_metrics['unknown_recall']:.4f}")
-                print(f"  Unknown Precision: {eval_metrics['unknown_precision']:.4f}")
-                print(f"  Unknown F1: {eval_metrics['unknown_f1']:.4f}")
-                print(f"  H-Measure: {eval_metrics['h_measure']:.4f}")
-
-                self.history['val_metrics'].append(eval_metrics)
-
-                mlflow.log_metrics(eval_metrics, step=epoch)
-                # Save best model
-                if save_best and eval_metrics['h_measure'] > best_h_measure:
-                    best_h_measure = eval_metrics['h_measure']
-                    mlflow.pytorch.log_model(self.model, "model")
-                    print(f"New best model saved! H-measure: {best_h_measure:.4f}")
-
-            # Update learning rate
-            if scheduler:
-                scheduler.step()
-
-        return self.history
-
-
-def get_transforms(image_size: int = 224):
-    """Get data transforms for training and testing."""
-    train_transform = transforms.Compose([
-        transforms.Resize((image_size + 32, image_size + 32)),
-        transforms.RandomCrop(image_size),
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomRotation(90),
-        transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
-
-    test_transform = transforms.Compose([
-        transforms.Resize((image_size, image_size)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
-
-    return train_transform, test_transform
-
-
-# Example usage
 if __name__ == "__main__":
-    # Configuration
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # Example usage
+    model = create_model()
+    print(f"Model created with {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters")
 
-    # Print recommended backbones
-    print("Recommended Backbones:")
-    for category, backbones in AVAILABLE_BACKBONES.items():
-        print(f"\n{category.upper()}:")
-        for backbone in backbones:
-            print(f"  - {backbone}")
+    # Example forward pass
+    batch_size = 16
+    support_images = torch.randn(5, 3, 224, 224)  # 5 support samples
+    support_labels = torch.tensor([0, 0, 1, 1, 2])  # 3 classes
+    query_images = torch.randn(10, 3, 224, 224)    # 10 query samples
 
-    # Initialize model with different backbones
-    print(f"\nInitializing models on {device}...")
-
-    # Lightweight model
-    lightweight_model = OpenWorldFewShotClassifier(
-        backbone_name='mobilenetv3_large_100',
-        embedding_dim=256,
-        temperature=10.0,
-        unknown_threshold=0.6
-    )
-
-    # Balanced model
-    balanced_model = OpenWorldFewShotClassifier(
-        backbone_name='resnet50',
-        embedding_dim=512,
-        temperature=10.0,
-        unknown_threshold=0.5
-    )
-
-    # High performance model
-    high_perf_model = OpenWorldFewShotClassifier(
-        backbone_name='convnext_base',
-        embedding_dim=768,
-        temperature=12.0,
-        unknown_threshold=0.4
-    )
-
-    print("Models initialized successfully!")
-
-    # Example of model parameters
-    print(f"\nModel Parameters:")
-    print(f"Lightweight: {sum(p.numel() for p in lightweight_model.parameters())/1e6:.1f}M")
-    print(f"Balanced: {sum(p.numel() for p in balanced_model.parameters())/1e6:.1f}M")
-    print(f"High Performance: {sum(p.numel() for p in high_perf_model.parameters())/1e6:.1f}M")
-
-    # Example training setup
-    model = balanced_model
-    trainer = OpenWorldTrainer(model, device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100)
-
-    print("\nTrainer setup complete!")
-    print("Use trainer.train_epoch(dataloader, optimizer) to train the model.")
+    with torch.no_grad():
+        results = model(support_images, support_labels, query_images)
+        print(f"Query predictions shape: {results['probabilities'].shape}")
+        print(f"Unknown samples detected: {results['unknown_mask'].sum().item()}")
