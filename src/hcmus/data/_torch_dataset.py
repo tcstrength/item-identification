@@ -1,3 +1,4 @@
+import random
 import numpy as np
 import torch
 from typing import Dict, List
@@ -69,8 +70,29 @@ class TorchDataset(Dataset):
         return dataloader
 
 
+def _crop_image(img_path, box, transforms, random_margin: float = 0.2):
+    box = map(int, box)
+    image = Image.open(img_path).convert("RGB")
+    image = ImageOps.exif_transpose(image)
+
+    max_w, max_h = image.size
+
+    # Crop image based on box [x1, y1, x2, y2]
+    x1, y1, x2, y2 = map(int, box)
+    margin_w = (x2 - x1) * random.random() * random_margin / 2
+    margin_h = (y2 - y1) * random.random() * random_margin / 2
+    x1 = max(x1 - margin_w, 0)
+    y1 = max(y1 - margin_h, 0)
+    x2 = min(x2 + margin_w, max_w)
+    y2 = min(y2 + margin_w, max_h)
+    cropped = image.crop((max(x1 - margin_w, 0), max(y1 - margin_h, 0), x2 + margin_w, y2 + margin_h))
+
+    if transforms:
+        cropped = transforms(cropped)
+    return cropped
+
 class CroppedObjectClassificationDataset(Dataset):
-    def __init__(self, data_list: List, label2idx: Dict=None, transforms=None, skip_labels=[], is_test=False):
+    def __init__(self, data_list: List, label2idx: Dict=None, transforms=None, skip_labels=[], is_test=False, random_margin: float = 0.0):
         """
         data_list: List of dicts with 'image' path and 'target' with 'boxes' and 'labels'.
         transforms: Optional transforms applied to each cropped object.
@@ -89,8 +111,9 @@ class CroppedObjectClassificationDataset(Dataset):
             self.label2idx = {v: k for k, v in enumerate(set(valid_labels))}
             logger.info(f"Auto infer `label2idx` mapping, mapping length: {len(self.label2idx)}.")
 
-        self.idx2label = {v: k for v, k in self.label2idx.items()}
+        self.idx2label = {k: v for v, k in self.label2idx.items()}
         self.known_classes = list(self.idx2label.values())
+        self.classes = self.known_classes
 
         for entry in data_list:
             img_path = entry['image']
@@ -122,21 +145,11 @@ class CroppedObjectClassificationDataset(Dataset):
         img_path = sample['image']
         box = sample['box']
         label = sample['label']
-
-        image = Image.open(img_path).convert("RGB")
-        image = ImageOps.exif_transpose(image)
-
-        # Crop image based on box [x1, y1, x2, y2]
-        x1, y1, x2, y2 = map(int, box)
-        cropped = image.crop((x1, y1, x2, y2))
-
-        if self.transforms:
-            cropped = self.transforms(cropped)
-
+        cropped = _crop_image(img_path, box, self.transforms)
         return cropped, label
 
 class CroppedFewShotDataset(FewShotDataset):
-    def __init__(self, data_list: List, label2idx: Dict=None, transforms=None, skip_labels=[], is_test=False):
+    def __init__(self, data_list: List, label2idx: Dict=None, transforms=None, skip_labels=[], keep_unknown=False):
         """
         data_list: List of dicts with 'image' path and 'target' with 'boxes' and 'labels'.
         transforms: Optional transforms applied to each cropped object.
@@ -169,7 +182,7 @@ class CroppedFewShotDataset(FewShotDataset):
 
                 labels.append(label)
 
-                if label not in self.label2idx and is_test == True:
+                if label not in self.label2idx and keep_unknown == True:
                     idx = -1
                 else:
                     idx = self.label2idx[label]
@@ -188,17 +201,7 @@ class CroppedFewShotDataset(FewShotDataset):
         img_path = sample['image']
         box = sample['box']
         label = sample['label']
-
-        image = Image.open(img_path).convert("RGB")
-        image = ImageOps.exif_transpose(image)
-
-        # Crop image based on box [x1, y1, x2, y2]
-        x1, y1, x2, y2 = map(int, box)
-        cropped = image.crop((x1, y1, x2, y2))
-
-        if self.transforms:
-            cropped = self.transforms(cropped)
-
+        cropped = _crop_image(img_path, box, self.transforms)
         return cropped, label
 
     def get_labels(self):

@@ -3,11 +3,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 import clip
 
-class CLIPViTBackbone(nn.Module):
+class CLIPBackbone(nn.Module):
     """
     ViT-B/16 backbone using CLIP's pre-trained model
     """
-    def __init__(self, backbone_name: str = "ViT-B/16", freeze_backbone: bool = True):
+    def __init__(self, backbone_name: str = "ViT-B/16", freeze_backbone: bool = False):
         super().__init__()
         self.model, self.preprocess = clip.load(backbone_name, device="cuda" if torch.cuda.is_available() else "cpu")
 
@@ -152,7 +152,6 @@ class OpenWorldPrototypicalNetwork(nn.Module):
 
         # Apply unknown detection (set probabilities to uniform for unknown samples)
         n_classes = prototypes.shape[0]
-        unknown_prob = 1.0 / (n_classes + 1)  # +1 for unknown class
 
         # Create final predictions including unknown class
         final_probs = torch.zeros(query_features.shape[0], n_classes + 1, device=query_features.device)

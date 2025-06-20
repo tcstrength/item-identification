@@ -37,9 +37,13 @@ class LabelStudioConnector:
                     tmp = result.value.rectanglelabels
                     if len(tmp) > 1:
                         logger.warning(f"Unexpected labels: {tmp}")
-                    tmp = tmp[0]
-                    if tmp not in labels:
-                        labels[tmp] = len(labels)
+                    elif len(tmp) == 0:
+                        logger.warning(f"No label found: {task.id}")
+                        continue
+
+                    for l in tmp:
+                        if l not in labels:
+                            labels[l] = len(labels)
         return labels
 
     def transform_labels(
@@ -55,7 +59,7 @@ class LabelStudioConnector:
         for item in dataset:
             new_labels = []
             for idx in item.get("target").get("labels"):
-                label_str = idx2label[idx]
+                label_str = idx2label.get(idx, default_label)
                 if label_str in valid_labels:
                     new_labels.append(idx2label[idx])
                 else:
@@ -82,7 +86,7 @@ class LabelStudioConnector:
                 for result in ann.result:
                     rect = result.value
                     label = rect.rectanglelabels[0]
-                    label_idx = labels[label]
+                    label_idx = labels.get(label, -1)
                     x_min = width * (rect.x / 100)
                     y_min = height * (rect.y / 100)
                     x_max = x_min + (width * (rect.width / 100))
