@@ -1,7 +1,7 @@
 import random
 import numpy as np
 import torch
-from typing import Dict, List
+from typing import Callable, Dict, List
 from loguru import logger
 from torchvision import transforms as T
 from PIL import Image, ImageOps
@@ -100,6 +100,7 @@ class CroppedObjectClassificationDataset(Dataset):
         self.samples = []
         self.transforms = transforms
         self.label2idx = label2idx
+        self.random_margin = random_margin
 
         valid_labels = []
         for entry in data_list:
@@ -148,50 +149,36 @@ class CroppedObjectClassificationDataset(Dataset):
         cropped = _crop_image(img_path, box, self.transforms)
         return cropped, label
 
-class CroppedFewShotDataset(FewShotDataset):
-    def __init__(self, data_list: List, label2idx: Dict=None, transforms=None, skip_labels=[], keep_unknown=False):
-        """
-        data_list: List of dicts with 'image' path and 'target' with 'boxes' and 'labels'.
-        transforms: Optional transforms applied to each cropped object.
-        """
-        self.samples = []
-        self.transforms = transforms
-        self.label2idx = label2idx
+    def get_labels(self):
+        labels = [x["label"] for x in self.samples]
+        return labels
 
-        valid_labels = []
-        for entry in data_list:
-            labels = entry['target']['labels']
-            labels = [x for x in labels if x not in skip_labels]
-            valid_labels.extend(labels)
-
-        if label2idx is None:
-            self.label2idx = {v: k for k, v in enumerate(set(valid_labels))}
-            logger.info(f"Auto infer `label2idx` mapping, mapping length: {len(self.label2idx)}.")
-
-        self.idx2label = {k: v for v, k in self.label2idx.items()}
-        self.known_classes = list(self.idx2label.values())
-
-        for entry in data_list:
-            img_path = entry['image']
-            boxes = entry['target']['boxes']
-            labels = entry['target']['labels']
-
-            for box, label in zip(boxes, labels):
-                if label in skip_labels:
-                    continue
-
-                labels.append(label)
-
-                if label not in self.label2idx and keep_unknown == True:
-                    idx = -1
-                else:
-                    idx = self.label2idx[label]
-
-                self.samples.append({
-                    'image': img_path,
-                    'box': box,
-                    'label': idx
-                })
+class CroppedImageTextDataset(CroppedObjectClassificationDataset):
+    def __init__(
+        self,
+        data_list: List,
+        label_desc: dict,
+        preprocess_fn: Callable,
+        tokenizer,
+        label2idx: Dict=None,
+        transforms=None,
+        skip_labels=[],
+        is_test=False,
+        random_margin: float=0.0,
+        text_template: str="a photo of {desc}"
+    ):
+        super().__init__(
+            data_list=data_list,
+            label2idx=label2idx,
+            transforms=transforms,
+            skip_labels=skip_labels,
+            is_test=is_test,
+            random_margin=random_margin
+        )
+        self.text_template = text_template
+        self.label_desc = label_desc
+        self.preprocess_fn = preprocess_fn
+        self.tokenizer = tokenizer
 
     def __len__(self):
         return len(self.samples)
@@ -200,10 +187,18 @@ class CroppedFewShotDataset(FewShotDataset):
         sample = self.samples[idx]
         img_path = sample['image']
         box = sample['box']
-        label = sample['label']
-        cropped = _crop_image(img_path, box, self.transforms)
-        return cropped, label
+        label: int = sample['label']
+        barcode = self.idx2label[label].split("-")[0]
+        label_desc = self.label_desc.get(barcode, "object")
 
-    def get_labels(self):
-        labels = [x["label"] for x in self.samples]
-        return labels
+        if label_desc == "object":
+            logger.warning(f"Unknown found, label={label}, name={self.idx2label[label]}.")
+
+        text = self.text_template.format(desc=label_desc)
+        cropped = _crop_image(img_path, box, self.transforms, self.random_margin)
+        cropped = self.preprocess_fn(cropped)
+        text = self.tokenizer(text)
+        return {
+            "image": cropped,
+            "text": text.squeeze(0)
+        }

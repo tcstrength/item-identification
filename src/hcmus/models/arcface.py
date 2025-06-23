@@ -275,3 +275,32 @@ class ArcFaceLoss(nn.Module):
         logits = self.s * (one_hot * target_logits + (1 - one_hot) * cosine)
 
         return F.cross_entropy(logits, labels)
+
+class ArcMarginProduct(nn.Module):
+    def __init__(self, in_features, out_features, s=30.0, m=0.50, easy_margin=False):
+        super().__init__()
+        self.weight = nn.Parameter(torch.FloatTensor(out_features, in_features))
+        nn.init.xavier_uniform_(self.weight)
+        self.s = s
+        self.m = m
+        self.easy_margin = easy_margin
+        self.cos_m = torch.cos(torch.tensor(m))
+        self.sin_m = torch.sin(torch.tensor(m))
+        self.th = torch.cos(torch.tensor(torch.pi - m))
+        self.mm = torch.sin(torch.tensor(torch.pi - m)) * m
+
+    def forward(self, input, label):
+        cosine = F.linear(F.normalize(input), F.normalize(self.weight))
+        sine = torch.sqrt(1.0 - cosine.pow(2))
+        phi = cosine * self.cos_m - sine * self.sin_m
+
+        if self.easy_margin:
+            phi = torch.where(cosine > 0, phi, cosine)
+        else:
+            phi = torch.where(cosine > self.th, phi, cosine - self.mm)
+
+        one_hot = torch.zeros_like(cosine)
+        one_hot.scatter_(1, label.view(-1, 1), 1.0)
+        output = (one_hot * phi) + ((1.0 - one_hot) * cosine)
+        output *= self.s
+        return output

@@ -1,3 +1,4 @@
+import mlflow
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -7,9 +8,12 @@ class CLIPBackbone(nn.Module):
     """
     ViT-B/16 backbone using CLIP's pre-trained model
     """
-    def __init__(self, backbone_name: str = "ViT-B/16", freeze_backbone: bool = False):
+    def __init__(self, backbone_name: str = "ViT-B/32", freeze_backbone: bool = False, mlflow_logged_model: str = None):
         super().__init__()
-        self.model, self.preprocess = clip.load(backbone_name, device="cuda" if torch.cuda.is_available() else "cpu")
+        if mlflow_logged_model is not None:
+            self.model = mlflow.pyfunc.load_model(mlflow_logged_model).get_raw_model()
+        else:
+            self.model, _ = clip.load(backbone_name, device="cuda" if torch.cuda.is_available() else "cpu")
 
         # Extract the visual encoder
         self.visual_encoder = self.model.visual
