@@ -148,13 +148,54 @@ class CLIPFineTuner:
             if param.requires_grad:
                 print(f"  {name}: {param.numel():,} params")
 
+    # def _add_lora_adapters(self, rank=16, alpha=16):
+    #     """Add LoRA adapters to attention layers"""
+    #     # This is a simplified LoRA implementation
+    #     # In practice, you'd need to modify the attention modules more carefully
+
+    #     def add_lora_to_linear(module, name):
+    #         if isinstance(module, nn.Linear):
+    #             # Create LoRA adapter
+    #             lora = LoRALayer(
+    #                 module.in_features,
+    #                 module.out_features,
+    #                 rank=rank,
+    #                 alpha=alpha
+    #             )
+
+    #             # Add as a new module
+    #             setattr(module, 'lora_adapter', lora)
+
+    #             # Enable gradients for LoRA parameters
+    #             for param in lora.parameters():
+    #                 param.requires_grad = True
+
+    #             # Modify forward pass to include LoRA
+    #             original_forward = module.forward
+    #             def new_forward(x):
+    #                 base_output = original_forward(x)
+    #                 if hasattr(module, 'lora_adapter'):
+    #                     lora_output = module.lora_adapter(x)
+    #                     return base_output + lora_output
+    #                 return base_output
+
+    #             module.forward = new_forward
+
+    #     # Apply LoRA to attention layers
+    #     for name, module in self.model.named_modules():
+    #         if 'attn' in name and isinstance(module, nn.Linear):
+    #             if any(proj in name for proj in ['q_proj', 'k_proj', 'v_proj', 'out_proj']):
+    #                 add_lora_to_linear(module, name)
+
     def _add_lora_adapters(self, rank=16, alpha=16):
         """Add LoRA adapters to attention layers"""
-        # This is a simplified LoRA implementation
-        # In practice, you'd need to modify the attention modules more carefully
 
         def add_lora_to_linear(module, name):
             if isinstance(module, nn.Linear):
+                # Freeze the original linear layer
+                for param in module.parameters():
+                    param.requires_grad = False
+
                 # Create LoRA adapter
                 lora = LoRALayer(
                     module.in_features,
@@ -162,30 +203,43 @@ class CLIPFineTuner:
                     rank=rank,
                     alpha=alpha
                 )
-
                 # Add as a new module
                 setattr(module, 'lora_adapter', lora)
 
-                # Enable gradients for LoRA parameters
+                # Enable gradients for LoRA parameters only
                 for param in lora.parameters():
                     param.requires_grad = True
 
-                # Modify forward pass to include LoRA
+                # Store original forward
                 original_forward = module.forward
+
                 def new_forward(x):
+                    # Ensure x requires gradients for LoRA computation
+                    if not x.requires_grad and any(p.requires_grad for p in lora.parameters()):
+                        x = x.requires_grad_(True)
+
                     base_output = original_forward(x)
                     if hasattr(module, 'lora_adapter'):
                         lora_output = module.lora_adapter(x)
-                        return base_output + lora_output
+                        # Handle gradient flow properly
+                        if base_output.requires_grad or lora_output.requires_grad:
+                            return base_output + lora_output
+                        else:
+                            return base_output.detach() + lora_output.detach()
                     return base_output
 
                 module.forward = new_forward
 
-        # Apply LoRA to attention layers
+        # FIXED: Collect modules first, then modify
+        modules_to_modify = []
         for name, module in self.model.named_modules():
             if 'attn' in name and isinstance(module, nn.Linear):
                 if any(proj in name for proj in ['q_proj', 'k_proj', 'v_proj', 'out_proj']):
-                    add_lora_to_linear(module, name)
+                    modules_to_modify.append((module, name))
+
+        # Now modify the collected modules
+        for module, name in modules_to_modify:
+            add_lora_to_linear(module, name)
 
     def get_trainable_parameters(self):
         """Get only trainable parameters for optimizer"""
@@ -373,7 +427,7 @@ class CLIPFineTuner:
                 print(f"Train Loss: {train_loss:.4f}")
                 mlflow.log_metrics({
                     "train_loss": train_loss
-                })
+                }, step=epoch)
 
                 if val_loader:
                     val_loss, val_acc = self.validate(val_loader)
@@ -381,7 +435,7 @@ class CLIPFineTuner:
                     mlflow.log_metrics({
                         "val_loss": val_loss,
                         "val_accuracy": val_acc
-                    })
+                    }, step=epoch)
 
                     if val_loss < best_val_loss:
                         best_val_loss = val_loss

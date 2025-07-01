@@ -79,13 +79,24 @@ def _crop_image(img_path, box, transforms, random_margin: float = 0.2):
 
     # Crop image based on box [x1, y1, x2, y2]
     x1, y1, x2, y2 = map(int, box)
-    margin_w = (x2 - x1) * random.random() * random_margin / 2
-    margin_h = (y2 - y1) * random.random() * random_margin / 2
+    margin_w = (x2 - x1) * (random.random() - 0.5) * random_margin / 2
+    margin_h = (y2 - y1) * (random.random() - 0.5) * random_margin / 2
     x1 = max(x1 - margin_w, 0)
     y1 = max(y1 - margin_h, 0)
     x2 = min(x2 + margin_w, max_w)
     y2 = min(y2 + margin_w, max_h)
-    cropped = image.crop((max(x1 - margin_w, 0), max(y1 - margin_h, 0), x2 + margin_w, y2 + margin_h))
+    # print(
+    #     max(x1 - margin_w, 0),
+    #     max(y1 - margin_h, 0),
+    #     min(x2 + margin_w, max_w),
+    #     min(y2 + margin_h, max_h)
+    # )
+    cropped = image.crop((
+        max(x1 - margin_w, 0),
+        max(y1 - margin_h, 0),
+        min(x2 + margin_w, max_w),
+        min(y2 + margin_h, max_h)
+    ))
 
     if transforms:
         cropped = transforms(cropped)
@@ -120,6 +131,7 @@ class CroppedObjectClassificationDataset(Dataset):
             img_path = entry['image']
             boxes = entry['target']['boxes']
             labels = entry['target']['labels']
+            task = entry['task']
 
             for box, label in zip(boxes, labels):
                 if label in skip_labels:
@@ -133,6 +145,7 @@ class CroppedObjectClassificationDataset(Dataset):
                     idx = self.label2idx[label]
 
                 self.samples.append({
+                    'task': task,
                     'image': img_path,
                     'box': box,
                     'label': idx
@@ -146,7 +159,7 @@ class CroppedObjectClassificationDataset(Dataset):
         img_path = sample['image']
         box = sample['box']
         label = sample['label']
-        cropped = _crop_image(img_path, box, self.transforms)
+        cropped = _crop_image(img_path, box, self.transforms, self.random_margin)
         return cropped, label
 
     def get_labels(self):

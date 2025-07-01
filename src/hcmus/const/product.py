@@ -1,4 +1,4 @@
-{
+PRODUCT_DESCRIPTION = {
     "8934804026817": [
         "Soy sauce Maggi mild 700ml bottle",
         "Maggi gentle soy sauce in 700ml container",
@@ -250,7 +250,7 @@
         "Safeguard antimicrobial hand wash in pure white formula 450ml"
     ],
     "8936156730718": [
-        "Blue concentrated fabric softener "Youthful" scent 3.2L pouch",
+        "Blue concentrated fabric softener Youthful scent 3.2L pouch",
         "3.2L refill pouch of Blue fabric softener with youthful fragrance",
         "Blue concentrated fabric conditioner youthful scent 3.2L pack"
     ],
@@ -500,3 +500,10 @@
         "Dasani filtered water 1.5L plastic container"
     ]
 }
+
+if __name__ == "__main__":
+    ls = []
+    for k, v in PRODUCT_DESCRIPTION.items():
+        ls.extend(v)
+    len(ls), len(set(ls))
+

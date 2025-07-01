@@ -163,6 +163,8 @@ class LabelStudioConnector:
                 logger.warning("Error fetching tasks:" + response.text)
                 break
 
+            # logger.info(response.content)
+
             page_tasks = response.json()
             page_tasks = [LabelStudioTask.model_validate(x) for x in page_tasks]
             # page_tasks = [x for x in page_tasks if x.is_labeled != 0]

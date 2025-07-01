@@ -183,3 +183,4 @@ runs/*
 
 notebook/*
 !notebook/*.ipynb
+!notebook/*.py

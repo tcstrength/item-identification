@@ -2,33 +2,35 @@ import numpy as np
 import timm
 import faiss
 import torch
+import clip
+import mlflow
 from tqdm import tqdm
 from loguru import logger
 from torch.nn import functional as F
-from transformers import CLIPProcessor, CLIPModel
 
 
-class MatchingNetwork():
-    def __init__(self, backbone_name: str, support_images, support_labels, is_hf: bool=False, emb_size: int=None):
-        if is_hf:
-            self.backbone = CLIPModel.from_pretrained(backbone_name)
-            self.processor = CLIPProcessor.from_pretrained(backbone_name)
-            # self.emb_size = self.backbone.vision_model.config.hidden_size
-            if emb_size is None:
-                self.emb_size = self.backbone.vision_model.config.hidden_size
-            else:
-                self.emb_size = emb_size
+class MatchingNetwork(nn.Module):
+    def __init__(self, backbone_name: str, support_images, support_labels, mlflow_logged_model: str = None):
+        super().__init__()
+        if mlflow_logged_model is not None:
+            self.model = mlflow.pyfunc.load_model(mlflow_logged_model).get_raw_model()
         else:
-            self.backbone = timm.create_model(
-                model_name=backbone_name,
-                pretrained=True,
-                num_classes=0,
-                global_pool="avg"
-            )
-            self.emb_size = self.backbone.num_features
-            self.freeze_backbone(self.backbone)
+            self.model, _ = clip.load(backbone_name, device="cuda" if torch.cuda.is_available() else "cpu")
 
-        self.is_hf = is_hf
+        self.visual_encoder = self.model.visual
+
+        for param in self.visual_encoder.parameters():
+            param.requires_grad = False
+
+        if "ViT-B" in backbone_name:
+            self.feature_dim = 512
+        elif "ViT-L" in backbone_name:
+            self.feature_dim = 768
+        elif "RN50" in backbone_name:
+            self.feature_dim = 1024
+        elif "RN101" in backbone_name:
+            self.feature_dim = 512
+
         self.support_labels = support_labels
         self.index = faiss.IndexHNSWFlat(self.emb_size, 128)
         for item in tqdm(support_images, desc="Building index"):
@@ -59,10 +61,6 @@ class MatchingNetwork():
 
     def predict(self, query_images, k: int = 3):
         result = []
-        # queries = []
-        # for q in query_images:
-        #     queries.append(self.create_embeddings(q.unsqueeze(0)))
-        # queries = self.create_embeddings(query_images)
         for q in query_images:
             q = self.create_embeddings(q)
             D, I = self.index.search(q.reshape(1, -1), k=k)
