@@ -16,7 +16,8 @@ class SearchModel(nn.Module):
         backbone_name: str = "ViT-B/32",
         index_dim: int = 256,
         mlflow_logged_model: str = None,
-        faiss_path: str = None
+        faiss_path: str = None,
+        use_text_feature: bool = False
     ):
         super().__init__()
         if mlflow_logged_model is not None:
@@ -25,6 +26,8 @@ class SearchModel(nn.Module):
             self.model, _ = clip.load(backbone_name, device="cuda" if torch.cuda.is_available() else "cpu")
 
         self.visual_encoder = self.model.visual
+        self.text_encoder = self.model.encode_text
+        self.use_text_feature = use_text_feature
         self.support_images = []
         self.support_labels = []
 
