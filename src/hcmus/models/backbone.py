@@ -5,8 +5,8 @@ from torch import nn
 
 
 class BaseBackbone(nn.Module):
-    @abstractmethod
-    def get_output_dim(self) -> int:
+    @property
+    def output_dim(self) -> int:
         pass
 
     @staticmethod
@@ -38,7 +38,8 @@ class CLIPBackbone(BaseBackbone):
         self._visual_encoder.eval()
         return self._visual_encoder(x)
 
-    def get_output_dim(self):
+    @property
+    def output_dim(self):
         return self._visual_encoder.output_dim
 
 

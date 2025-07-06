@@ -131,15 +131,21 @@ def get_data_splits(split_names: list[str] = ["train", "test", "val"]):
     return splits
 
 
-def get_image_datasets(splits, transform_train=None, transform_test=None, random_margin: float=0.3):
+def get_image_datasets(
+    splits,
+    transform_train=None,
+    transform_test=None,
+    random_margin: float=0.3,
+    label2idx: dict = None
+):
     skip_labels = [
         "object",
-        "8936079140021-ca-phe-sua-highland-coffee-lon-185ml",
     ]
 
     train_dataset = CroppedObjectClassificationDataset(
         splits["train"],
         skip_labels=skip_labels,
+        label2idx=label2idx,
         transforms=transform_train,
         random_margin=random_margin
     )
@@ -169,40 +175,36 @@ def get_image_datasets(splits, transform_train=None, transform_test=None, random
         "test": test_dataset
     }
 
-def get_image_datasets_v2(splits, transform_train=None, transform_test=None, random_margin: float=0.3):
+def get_image_datasets_v2(
+    splits,
+    transform_train=None,
+    transform_test=None,
+    random_margin: float=0.3,
+    label2idx: dict = None
+):
     skip_labels = ["object"]
+    datasets = {}
 
-    train_dataset = CroppedImageDatasetV2(
-        splits["train"],
-        skip_labels=skip_labels,
-        transforms=transform_train,
-        random_margin=random_margin
-    )
-    support_dataset = CroppedImageDatasetV2(
-        splits["train"],
-        skip_labels=skip_labels,
-        label2idx=train_dataset.label2idx,
-        transforms=transform_test
-    )
-    val_dataset = CroppedImageDatasetV2(
-        splits["val"],
-        skip_labels=skip_labels,
-        label2idx=train_dataset.label2idx,
-        transforms=transform_test
-    )
-    test_dataset = CroppedImageDatasetV2(
-        splits["test"],
-        skip_labels=skip_labels,
-        label2idx=train_dataset.label2idx,
-        transforms=transform_test
-    )
+    for k, v in splits.items():
+        if k == "train":
+            transform_fn = transform_train
+            random_margin = random_margin
+        else:
+            transform_fn = transform_test
+            random_margin = 0
 
-    return {
-        "train": train_dataset,
-        "support": support_dataset,
-        "val": val_dataset,
-        "test": test_dataset
-    }
+        datasets[k] = CroppedImageDatasetV2(
+            data_list=v,
+            skip_labels=skip_labels,
+            label2idx=label2idx,
+            transforms=transform_fn,
+            random_margin=random_margin
+        )
+
+        if k == "train":
+            label2idx = datasets[k].label2idx
+
+    return datasets
 
 def get_data_loaders(splits, shuffles):
     result = {}

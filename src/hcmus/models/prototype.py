@@ -1,98 +1,46 @@
-from IPython import embed
-import mlflow
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import clip
-from typing import Tuple, Optional
-
-class CLIPBackbone(nn.Module):
-    """
-    ViT-B/16 backbone using CLIP's pre-trained model
-    """
-    def __init__(self, backbone_name: str = "ViT-B/32", freeze_backbone: bool = False, mlflow_logged_model: str = None):
-        super().__init__()
-        if mlflow_logged_model is not None:
-            self.model = mlflow.pyfunc.load_model(mlflow_logged_model).get_raw_model()
-        else:
-            self.model, _ = clip.load(backbone_name, device="cuda" if torch.cuda.is_available() else "cpu")
-
-        # Extract the visual encoder
-        self.visual_encoder = self.model.visual
-
-        if freeze_backbone:
-            for param in self.visual_encoder.parameters():
-                param.requires_grad = False
-
-        # Feature dimension for ViT-B/16
-        if "ViT-B" in backbone_name:
-            self.feature_dim = 512
-        elif "ViT-L" in backbone_name:
-            self.feature_dim = 768
-        elif "RN50" in backbone_name:
-            self.feature_dim = 1024
-        elif "RN101" in backbone_name:
-            self.feature_dim = 512
-
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass through ViT backbone
-        Args:
-            x: Input tensor of shape (batch_size, 3, 224, 224)
-        Returns:
-            Feature tensor of shape (batch_size, 512)
-        """
-        return self.visual_encoder(x)
+from torch.optim import Adam
+from typing import Tuple
+from hcmus.models.backbone import BaseBackbone
 
 
 class PrototypicalNetwork(nn.Module):
     def __init__(
         self,
-        clip_model_name: str = 'ViT-B/32',
-        feature_dim: Optional[int] = None,
-        dropout: float = 0.1,
-        freeze_clip: bool = False
+        backbone: BaseBackbone,
+        dropout: float = 0.2,
+        feature_dim: int = 512
     ):
         super().__init__()
 
-        self.clip_model, self.preprocess = clip.load(clip_model_name)
-
-        clip_dim = self.clip_model.visual.output_dim
-
-        if feature_dim is None:
-            feature_dim = clip_dim
-
-        self.feature_projector = nn.Sequential(
-            nn.Linear(clip_dim, feature_dim),
+        self._backbone = backbone
+        self._feature_dim = feature_dim
+        self._projector = nn.Sequential(
+            nn.Linear(self._backbone.output_dim, feature_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(feature_dim, feature_dim)
         )
 
-        # Freeze CLIP if requested
-        if freeze_clip:
-            for param in self.clip_model.parameters():
-                param.requires_grad = False
+    def encode_images(self, images: torch.Tensor, normalized: bool = True) -> torch.Tensor:
+        features = self._backbone(images)
+        features = self._projector(features.float())
+        if not normalized:
+            return features
 
-        self.feature_dim = feature_dim
-
-    def encode_images(self, images: torch.Tensor) -> torch.Tensor:
-        with torch.no_grad() if hasattr(self, '_freeze_clip') else torch.enable_grad():
-            clip_features = self.clip_model.encode_image(images)
-
-        features = self.feature_projector(clip_features.float())
         return F.normalize(features, dim=-1)
 
     def compute_prototypes(
         self,
         support_features: torch.Tensor,
-        support_labels: torch.Tensor,
-        n_classes: int
+        support_labels: torch.Tensor
     ) -> torch.Tensor:
+        n_classes = len(support_labels.unique())
 
         prototypes = torch.zeros(
-            n_classes, self.feature_dim,
+            n_classes, self._feature_dim,
             device=support_features.device
         )
 
@@ -108,43 +56,65 @@ class PrototypicalNetwork(nn.Module):
         support_images: torch.Tensor = None,
         support_labels: torch.Tensor = None,
         query_images: torch.Tensor = None,
-        n_classes: int = None,
         prototypes: torch.Tensor = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         if prototypes is None:
             support_features = self.encode_images(support_images)
             query_features = self.encode_images(query_images)
-            prototypes = self.compute_prototypes(support_features, support_labels, n_classes)
+            prototypes = self.compute_prototypes(support_features, support_labels)
         else:
             query_features = self.encode_images(query_images)
 
         distances = torch.cdist(query_features, prototypes)
         logits = -distances
+        # logits = distances
 
         return logits, prototypes
 
+class PrototypicalTrainer:
+    def __init__(self, model, optimizer, criterion_fn):
+        self.model = model
+        self.optimizer = optimizer
+        self.criterion_fn = criterion_fn
 
-class PrototypeTracker:
-    def __init__(self, momentum=0.9):
-        self.prototypes = {}
-        self.momentum = momentum
+    def train_episode(self, support_data, support_labels, query_data, query_labels):
+        self.model.train()
+        self.optimizer.zero_grad()
 
-    def update(self, embeddings, labels):
-        """Update prototypes with exponential moving average"""
-        # print(embeddings.shape, labels.shape)
-        for emb, label_item in zip(embeddings, labels):
-            # print(emb.shape)
-            if label_item not in self.prototypes:
-                self.prototypes[label_item] = emb.clone().detach()
-            else:
-                self.prototypes[label_item] = (
-                    self.momentum * self.prototypes[label_item] +
-                    (1 - self.momentum) * emb.detach()
-                )
+        logits, _ = self.model(support_data, support_labels, query_data)
 
-    def get_prototypes(self, classes: list[int]):
-        prototypes = []
-        for c in classes:
-            prototypes.append(self.prototypes[c])
-        return torch.vstack(prototypes)
+        loss = self.criterion_fn(logits, query_labels)
+
+        loss.backward()
+        self.optimizer.step()
+
+        preds = torch.argmax(logits, dim=1)
+        acc = (preds == query_labels).float().mean().item()
+
+        return loss.item(), acc
+
+    def evaluate_episode(self, support_data, support_labels, query_data, query_labels):
+        self.model.eval()
+        with torch.no_grad():
+            logits, _ = self.model(support_data, support_labels, query_data)
+            loss = self.criterion_fn(logits, query_labels)
+            preds = torch.argmax(logits, dim=1)
+            acc = (preds == query_labels).float().mean().item()
+        return loss.item(), acc
+
+if __name__ == "__main__":
+    from hcmus.utils import data_utils
+    from hcmus.utils import transform_utils
+    from hcmus.models.backbone import CLIPBackbone
+    splits = data_utils.get_data_splits(["train"])
+    transforms_train, transforms_test = transform_utils.get_transforms_downscale_random_v2()
+    train_dataset = data_utils.get_image_datasets_v2(splits, transform_train=transforms_train)["train"]
+    device = "mps"
+    backbone = CLIPBackbone("ViT-B/32", device="mps")
+    model = PrototypicalNetwork(backbone)
+    model.to(device)
+    image, label, _ = train_dataset[0]
+
+    features = backbone(image.half().to(device))
+    features.shape
 

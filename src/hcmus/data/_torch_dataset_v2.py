@@ -15,12 +15,17 @@ def _crop_image(img_path, box, transforms, random_margin: float = 0.2):
     max_w, max_h = image.size
 
     x1, y1, x2, y2 = map(int, box)
-    margin_w = (x2 - x1) * (random.random() - 0.5) * random_margin / 2
-    margin_h = (y2 - y1) * (random.random() - 0.5) * random_margin / 2
-    x1 = max(x1 - margin_w, 0)
-    y1 = max(y1 - margin_h, 0)
-    x2 = min(x2 + margin_w, max_w)
-    y2 = min(y2 + margin_w, max_h)
+    margin_w = 0
+    margin_h = 0
+
+    if random_margin != 0:
+        margin_w = (x2 - x1) * (random.random() - 0.5) * random_margin / 2
+        margin_h = (y2 - y1) * (random.random() - 0.5) * random_margin / 2
+        x1 = max(x1 - margin_w, 0)
+        y1 = max(y1 - margin_h, 0)
+        x2 = min(x2 + margin_w, max_w)
+        y2 = min(y2 + margin_w, max_h)
+
     cropped = image.crop((
         max(x1 - margin_w, 0),
         max(y1 - margin_h, 0),

@@ -156,3 +156,27 @@ def get_transforms_downscale_random_v2(size: int = 128):
 
     return transform_train, transform_test
 
+def get_transforms_downscale_random_v2(size: int = 128):
+    transform_train = T.Compose([
+        T.Lambda(lambda img: T.Resize(random.randint(32, 224))(img)),
+        T.RandomHorizontalFlip(p=0.5),
+        T.RandomAffine(
+            degrees=90,          # additional rotation control
+            translate=(0.2, 0.2),  # 5% translation in both directions
+            shear=10             # shear angle
+        ),
+        T.RandomResizedCrop(
+            size=224,
+            scale=(0.8, 1.2),
+            ratio=(0.75, 1.3333)
+        ),
+        T.ToTensor()
+    ])
+
+    transform_test = T.Compose([
+        T.Resize((size, size)),
+        T.Resize((224, 224)),
+        T.ToTensor()
+    ])
+
+    return transform_train, transform_test
