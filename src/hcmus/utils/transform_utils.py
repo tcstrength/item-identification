@@ -180,3 +180,30 @@ def get_transforms_downscale_random_v2(size: int = 128):
     ])
 
     return transform_train, transform_test
+
+def get_transforms_downscale_transfer_learning(size: int = 128):
+    transform_train = T.Compose([
+        T.Lambda(lambda img: T.Resize(random.randint(32, 224))(img)),
+        T.RandomHorizontalFlip(p=0.5),
+        T.ColorJitter(
+            brightness=0.2,    # ±20% brightness change
+            contrast=0.2,      # ±20% contrast change
+            saturation=0.2,    # ±20% saturation change
+            hue=0.1           # ±10% hue shift
+        ),
+        T.RandomResizedCrop(
+            size=224,
+            scale=(0.8, 1.2),
+            ratio=(0.75, 1.3333)
+        ),
+        T.RandAugment(num_ops=5),
+        T.ToTensor()
+    ])
+
+    transform_test = T.Compose([
+        T.Resize((size, size)),
+        T.Resize((224, 224)),
+        T.ToTensor()
+    ])
+
+    return transform_train, transform_test

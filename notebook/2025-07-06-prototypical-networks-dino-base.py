@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 from easyfsl.samplers import TaskSampler
 from hcmus.utils import data_utils, viz_utils
 from hcmus.utils import transform_utils
-from hcmus.models.backbone import CLIPBackbone
+from hcmus.models.backbone import DinoBackbone
 from hcmus.models.prototype import PrototypicalNetwork
 from hcmus.models.prototype import PrototypicalTrainer
 
@@ -47,7 +47,7 @@ def create_fewshot_loader(datasets, split_name: str, n_way, n_shot, n_query, n_t
 
 
 def setup_trainer():
-    backbone = CLIPBackbone("ViT-B/32")
+    backbone = DinoBackbone()
     model = PrototypicalNetwork(backbone)
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
     criterion = nn.CrossEntropyLoss()
@@ -277,11 +277,12 @@ if __name__ == "__main__":
     transform_train, transform_test = transform_utils.get_transforms_downscale_random_v2()
     datasets = data_utils.get_image_datasets(splits, transform_test, transform_test, random_margin=0.0)
 
-    # train_episode(datasets, n_way=64, n_shot=5)
-    train_episode(datasets, n_way=64, n_shot=5, n_tasks=16)
-    train_episode(datasets, n_way=64, n_shot=7, n_tasks=16)
-    train_episode(datasets, n_way=99, n_shot=5, n_tasks=16)
-    train_episode(datasets, n_way=99, n_shot=7, n_tasks=16)
+    train_episode(datasets, n_way=32, n_shot=5)
+    # train_episode(datasets, n_way=64, n_shot=5, n_tasks=16)
+    # train_episode(datasets, n_way=64, n_shot=7, n_tasks=16)
+    # train_episode(datasets, n_way=99, n_shot=5, n_tasks=16)
+    # train_episode(datasets, n_way=99, n_shot=7, n_tasks=16)
+    # train_episode(datasets, n_way=99, n_shot=11, n_tasks=16, n_epoch=64)
 
 
 

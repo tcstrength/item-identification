@@ -19,6 +19,7 @@ class YoloRegionProposal(nn.Module):
         return boxes
 
 if __name__ == "__main__":
+    from hcmus.models.rpn import YoloRegionProposal
     run_id = "3ae25b8dcd324fbdbe8d5893f391e045"
     model = YoloRegionProposal(run_id)
     result = model("/Volumes/Cucumber/Projects/datasets/raw/hcmus-iid-lbs/0b1403a927c13d2a9a0535901e12398f.jpg")
