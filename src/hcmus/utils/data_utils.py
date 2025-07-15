@@ -110,9 +110,9 @@ VALID_LABELS = VALID_LABELS.splitlines()
 VALID_LABELS = [x for x in VALID_LABELS if len(x) > 0]
 
 
-def get_data_splits(split_names: list[str] = ["train", "test", "val"]):
+def get_data_splits(split_names: list[str] = ["train", "test", "val"], labels: list[str] = {}):
     splits = {}
-    labels = {}
+    # labels = {}
     for split_name in split_names:
         lsb_connector = LabelStudioConnector(
             url=appconfig.LABEL_STUDIO_URL,

@@ -26,12 +26,11 @@ def _crop_image(img_path, box, transforms, random_margin: float = 0.2):
         x2 = min(x2 + margin_w, max_w)
         y2 = min(y2 + margin_w, max_h)
 
-    cropped = image.crop((
-        max(x1 - margin_w, 0),
-        max(y1 - margin_h, 0),
-        min(x2 + margin_w, max_w),
-        min(y2 + margin_h, max_h)
-    ))
+    try:
+        cropped = image.crop((x1, y1, x2, y2))
+    except Exception as e:
+        logger.warning(f"{e}, given ({x1},{y1},{x2},{y2})")
+        return None
 
     if transforms:
         cropped = transforms(cropped)
@@ -79,12 +78,15 @@ class CroppedImageDataset(Dataset):
                 if label in skip_labels:
                     continue
 
-                labels.append(label)
+                # labels.append(label)
 
-                if label not in self.label2idx and not ignore_unknown:
+                if label not in self.label2idx and ignore_unknown == False:
                     idx = -1
                 else:
                     idx = self.label2idx[label]
+
+                # if label == "object":
+                #     print(idx)
 
                 self.samples.append({
                     "task": task,
