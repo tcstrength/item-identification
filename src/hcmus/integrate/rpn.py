@@ -32,14 +32,17 @@ class RegionProposal(nn.Module):
                 inner[2] <= outer[2] and inner[3] <= outer[3])
 
     @staticmethod
-    def remove_duplicates(boxes, iou_threshold=0.9):
-        # Sort by area, descending
-        boxes = sorted(boxes, key=lambda b: (b[2] - b[0]) * (b[3] - b[1]), reverse=True)
+    def remove_duplicates(boxes, conf, iou_threshold=0.9):
+        # Pair boxes with confidence scores
+        box_conf_pairs = list(zip(boxes, conf))
+        # Sort by confidence descending
+        box_conf_pairs.sort(key=lambda x: x[1], reverse=True)
+
         kept = []
 
-        for box in boxes:
+        for box, score in box_conf_pairs:
             discard = False
-            for kept_box in kept:
+            for kept_box, _ in kept:
                 if RegionProposal.is_inside(box, kept_box):
                     discard = True
                     break
@@ -47,8 +50,13 @@ class RegionProposal(nn.Module):
                     discard = True
                     break
             if not discard:
-                kept.append(box)
-        return kept
+                kept.append((box, score))
+        if len(kept) == 0:
+            return [], []
+        boxes, scores = zip(*kept)  # This gives tuples
+        boxes = list(boxes)
+        scores = list(scores)
+        return boxes, scores # List of (box, score)
 
     def forward(self, image, threshold: float=0.5) -> List[Tuple]:
         raise NotImplementedError
@@ -65,7 +73,8 @@ class YoloRegionProposal(RegionProposal):
         conf = result.boxes.conf
         mask = conf >= threshold
         boxes = boxes[mask]
-        return boxes
+        conf = conf[mask]
+        return boxes, conf
 
 if __name__ == "__main__":
     from hcmus.integrate.rpn import YoloRegionProposal

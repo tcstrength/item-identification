@@ -24,10 +24,10 @@ class Classifier():
     def detect_unknown(logits, method: Literal["entropy", "prob"], threshold: float):
         probs = F.softmax(logits, dim=-1)
         if method == "prob":
-            score = probs.max()
+            score = probs.max().item()
             return score < threshold, score
         elif method == "entropy":
-            score = Classifier.compute_entropy(probs)
+            score = Classifier.compute_entropy(probs).item()
             return score > threshold, score
         else:
             raise ValueError(f"Invalid method {method}")

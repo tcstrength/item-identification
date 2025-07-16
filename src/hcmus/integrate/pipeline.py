@@ -18,23 +18,24 @@ class ModelPipeline:
         image: Union[Image.Image, str],
         region_threshold: float = 0.5,
         unknown_method: str = "entropy",
-        unknown_threshold: float = 0.49
+        unknown_threshold: float = 0.49,
+        unknown_label: str = "object"
     ):
         if isinstance(image, str):
             image = Image.open(image)
             image = ImageOps.exif_transpose(image)
 
-        boxes = self.rpn.forward(image, region_threshold)
+        boxes, conf = self.rpn.forward(image, region_threshold)
         boxes = [list(map(int, x)) for x in boxes]
         logger.info(f"Removing duplicated boxes, before: {len(boxes)}")
-        boxes = self.rpn.remove_duplicates(boxes)
+        boxes, conf = self.rpn.remove_duplicates(boxes, conf)
         logger.info(f"Deduplicated boxes: {len(boxes)}")
 
         subs = [image.crop(x) for x in boxes]
         subs = [self.transforms(x) for x in subs]
         result = []
 
-        for box, sub in zip(boxes, subs):
+        for box, box_score, sub in zip(boxes, conf, subs):
             logits = self.classifier.forward(sub)
             is_unknown, score = self.classifier.detect_unknown(
                 logits=logits,
@@ -45,10 +46,11 @@ class ModelPipeline:
             if is_unknown:
                 pred_idx = -1
 
-            pred_label = self.classifier.idx2label.get(pred_idx)
+            pred_label = self.classifier.idx2label.get(pred_idx, unknown_label)
 
             result.append({
-                "box": box,
+                "box": tuple(box),
+                "score": box_score.item(),
                 "pred_idx": pred_idx,
                 "pred_label": pred_label,
                 "unknown_method": unknown_method,
