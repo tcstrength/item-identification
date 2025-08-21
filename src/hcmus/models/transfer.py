@@ -174,8 +174,6 @@ class TransferTrainer:
                 new_best_model = val_metrics["accuracy"] > best_val_accuracy
                 if new_best_model:
                     best_val_accuracy = val_metrics["accuracy"]
-
-                if new_best_model:
                     self.save_model("best_model.pt")
 
                 # Log validation metrics to MLflow
@@ -203,12 +201,23 @@ class TransferTrainer:
         # Log final model to MLflow
         if self.mlflow_run:
             mlflow.pytorch.log_model(self.model, "model")
+            if test_loader is not None:
+                test_metrics = self.evaluate(test_loader, verbose=False)
+                mlflow.log_metric('test_loss', test_metrics['loss'], step=epoch)
+                mlflow.log_metric('test_accuracy', test_metrics['accuracy'], step=epoch)
+                mlflow.log_metric('test_f1_macro', test_metrics['f1_macro'], step=epoch)
+                mlflow.log_metric('test_f1_micro', test_metrics['f1_micro'], step=epoch)
 
-        return {
-            'train_losses': self.train_losses,
-            'val_losses': self.val_losses,
-            'val_accuracies': self.val_accuracies
-        }
+                if verbose:
+                    print(f'  Test Loss: {test_metrics["loss"]:.4f}')
+                    print(f'  Test Accuracy: {test_metrics["accuracy"]:.4f}')
+
+        self.end_run()
+        # return {
+        #     'train_losses': self.train_losses,
+        #     'val_losses': self.val_losses,
+        #     'val_accuracies': self.val_accuracies
+        # }
 
     def evaluate(self, test_loader, verbose=True, log_mlflow: bool=False):
         """
@@ -221,6 +230,7 @@ class TransferTrainer:
         Returns:
             dict: Dictionary containing all evaluation metrics
         """
+        print("Start evaluating...")
         self.model.eval()
 
         all_predictions = []

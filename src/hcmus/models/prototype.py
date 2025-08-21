@@ -18,6 +18,7 @@ class PrototypicalNetwork(nn.Module):
         self._backbone = backbone
         self._feature_dim = feature_dim
         self._projector = nn.Sequential(
+            nn.Dropout(dropout),
             nn.Linear(self._backbone.output_dim, feature_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
@@ -55,20 +56,13 @@ class PrototypicalNetwork(nn.Module):
         self,
         support_images: torch.Tensor = None,
         support_labels: torch.Tensor = None,
-        query_images: torch.Tensor = None,
-        prototypes: torch.Tensor = None
+        query_images: torch.Tensor = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        if prototypes is None:
-            support_features = self.encode_images(support_images)
-            query_features = self.encode_images(query_images)
-            prototypes = self.compute_prototypes(support_features, support_labels)
-        else:
-            query_features = self.encode_images(query_images)
-
+        support_features = self.encode_images(support_images)
+        query_features = self.encode_images(query_images)
+        prototypes = self.compute_prototypes(support_features, support_labels)
         distances = torch.cdist(query_features, prototypes)
         logits = -distances
-        # logits = distances
-
         return logits, prototypes
 
 class PrototypicalTrainer:

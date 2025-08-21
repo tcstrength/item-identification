@@ -64,3 +64,26 @@ class LabelStudioTask(BaseModel):
     comment_authors: Optional[List[Any]] = None
     annotations: Optional[List[Annotation]] = None
     predictions: Optional[List[Any]] = None
+
+
+class TargetBox(BaseModel):
+    xmin: int
+    xmax: int
+    ymin: int
+    ymax: int
+
+
+class TargetLabel(BaseModel):
+    label_idx: int
+    label_str: str
+
+
+class DatasetTarget(BaseModel):
+    boxes: List[TargetBox]
+    labels: List[TargetLabel]
+
+
+class DatasetItem(BaseModel):
+    image: str
+    task: LabelStudioTask
+    target: DatasetTarget

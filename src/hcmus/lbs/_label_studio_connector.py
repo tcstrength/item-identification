@@ -8,6 +8,7 @@ from typing import List, Dict
 from loguru import logger
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from hcmus.lbs import LabelStudioTask
+from hcmus.lbs._label_studio_models import DatasetItem, DatasetTarget, TargetBox, TargetLabel
 
 class LabelStudioConnector:
     def __init__(self, url: str, api_key: str, project_id: int, temp_dir: str, verbose: bool = False):
@@ -46,34 +47,34 @@ class LabelStudioConnector:
                             labels[l] = len(labels)
         return labels
 
-    def transform_labels(
-        self,
-        dataset: List[Dict],
-        label2idx: Dict[str, int],
-        valid_labels: List[str],
-        default_label: str = "object"
-    ) -> List[Dict]:
-        """Transform labels in dataset downloaded from self.download_dataset"""
-        dataset = [x.copy() for x in dataset if x.get("target").get("labels")]
-        idx2label = {v: k for k, v in label2idx.items()}
-        for item in dataset:
-            new_labels = []
-            for idx in item.get("target").get("labels"):
-                label_str = idx2label.get(idx, default_label)
-                if label_str in valid_labels:
-                    new_labels.append(idx2label[idx])
-                else:
-                    # Compatible with SKU110k
-                    new_labels.append(default_label)
-            item.get("target")["labels"] = new_labels
-        return dataset
+    # def transform_labels(
+    #     self,
+    #     dataset: List[DatasetItem],
+    #     label2idx: Dict[str, int],
+    #     valid_labels: List[str],
+    #     default_label: str = "object"
+    # ) -> List[Dict]:
+    #     """Transform labels in dataset downloaded from self.download_dataset"""
+    #     dataset = [x.copy() for x in dataset if x.get("target").get("labels")]
+    #     idx2label = {v: k for k, v in label2idx.items()}
+    #     for item in dataset:
+    #         new_labels = []
+    #         for idx in item.get("target").get("labels"):
+    #             label_str = idx2label.get(idx, default_label)
+    #             if label_str in valid_labels:
+    #                 new_labels.append(idx2label[idx])
+    #             else:
+    #                 # Compatible with SKU110k
+    #                 new_labels.append(default_label)
+    #         item.get("target")["labels"] = new_labels
+    #     return dataset
 
-    def download_dataset(self, tasks: List[LabelStudioTask], labels: Dict[str, int] = None) -> List[Dict]:
+    def download_dataset(self, tasks: List[LabelStudioTask], labels: Dict[str, int] = None) -> List[DatasetItem]:
         if labels is None:
             labels = self.extract_labels(tasks)
             logger.info(f"No labels input, auto extract {len(labels)} labels.")
 
-        def download_one(task):
+        def download_one(task) -> DatasetItem:
             path = self.get_image(task)
             tg_boxes = []
             tg_labels = []
@@ -85,25 +86,35 @@ class LabelStudioConnector:
                 ann = task.annotations[0]
                 for result in ann.result:
                     rect = result.value
-                    label = rect.rectanglelabels[0]
-                    label_idx = labels.get(label, -1)
-                    x_min = width * (rect.x / 100)
-                    y_min = height * (rect.y / 100)
-                    x_max = x_min + (width * (rect.width / 100))
-                    y_max = y_min + (height * (rect.height / 100))
-                    tg_boxes.append([x_min, y_min, x_max, y_max])
-                    tg_labels.append(label_idx)
+                    label_str = rect.rectanglelabels[0]
+                    label_idx = labels.get(label_str, -1)
 
-            target = {
-                "boxes": tg_boxes,
-                "labels": tg_labels
-            }
+                    if label_idx == -1:
+                        logger.warning(f"Label not found (task_id={task.id}): {label_str}")
+                        label_str = "unknown"
 
-            return {
-                "image": path,
-                "task": task,
-                "target": target
-            }
+                    x_min = int(width * (rect.x / 100))
+                    y_min = int(height * (rect.y / 100))
+                    x_max = int(x_min + (width * (rect.width / 100)))
+                    y_max = int(y_min + (height * (rect.height / 100)))
+
+                    tg_boxes.append(TargetBox(
+                        xmin=x_min, xmax=x_max,
+                        ymin=y_min, ymax=y_max
+                    ))
+
+                    tg_labels.append(TargetLabel(
+                        label_idx=label_idx,
+                        label_str=label_str
+                    ))
+
+            target = DatasetTarget(boxes=tg_boxes, labels=tg_labels)
+            result = DatasetItem(
+                image=path,
+                task=task,
+                target=target
+            )
+            return result
 
         images = []
         with ThreadPoolExecutor() as executor:

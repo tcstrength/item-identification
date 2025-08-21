@@ -1,3 +1,5 @@
+import os
+import json
 import random
 import torch
 import copy
@@ -45,12 +47,14 @@ class CroppedImageDataset(Dataset):
         transforms=None,
         skip_labels=[],
         ignore_unknown=True,
-        random_margin: float = 0.0
+        random_margin: float=0.0,
+        return_metadata: bool=True
     ):
         self.samples = []
         self.transforms = transforms
         self.label2idx = label2idx
         self.random_margin = random_margin
+        self.return_metadata = return_metadata
 
         logger.info(f"Apply random_margin={self.random_margin}")
 
@@ -113,7 +117,10 @@ class CroppedImageDataset(Dataset):
             "box": box,
             "path": img_path
         }
-        return cropped, label_idx, metadata
+        if self.return_metadata:
+            return cropped, label_idx, metadata
+        else:
+            return cropped, label_idx
 
     def collate_fn(self, batch):
         data = [item[0] for item in batch]  # Extract data
@@ -125,7 +132,7 @@ class CroppedImageDataset(Dataset):
         return data, labels
 
     def get_labels(self):
-        labels = [x["label"] for x in self.samples]
+        labels = [x["label_idx"] for x in self.samples]
         return labels
 
 
@@ -168,3 +175,65 @@ class CroppedImageTextDataset(CroppedImageDataset):
             "image": cropped,
             "text": text.squeeze(0)
         }
+
+
+class CroppedCocoDataset(Dataset):
+    def __init__(self, split_path, transform=None):
+        # Get annotation json
+        ann_path = None
+        for file in os.listdir(split_path):
+            if file.startswith("annotations_") and file.endswith(".json"):
+                ann_path = os.path.join(split_path, file)
+                break
+        assert ann_path is not None, "Annotation file not found!"
+
+        with open(ann_path, 'r') as f:
+            coco = json.load(f)
+
+        # Build category id to index mapping
+        self.cat2idx = {}
+        for idx, cat in enumerate(coco['categories']):
+            if cat['name'] == "unknown":
+                logger.info(f"Skip category_id={cat['id']}")
+                continue
+
+            self.cat2idx[cat['id']] = idx
+
+        # Build image id to filename mapping
+        self.imgs = {img['id']: img for img in coco['images']}
+        self.img_dir = os.path.join(split_path, "images")
+
+        # For each annotation, store (img_file, bbox, label_idx)
+        self.samples = []
+        for ann in coco['annotations']:
+            img_info = self.imgs[ann['image_id']]
+            img_file = os.path.join(self.img_dir, img_info['file_name'])
+            bbox = ann['bbox']  # [x, y, w, h]
+            label_idx = self.cat2idx.get(ann['category_id'])
+
+            if label_idx is not None:
+                self.samples.append((img_file, bbox, label_idx))
+            else:
+                logger.debug(f"Skip object with category_id={ann['category_id']}")
+
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        img_file, bbox, label_idx = self.samples[idx]
+        image = Image.open(img_file).convert("RGB")
+
+        x, y, w, h = bbox
+        x1, y1, x2, y2 = int(x), int(y), int(x + w), int(y + h)
+        cropped = image.crop((x1, y1, x2, y2))
+
+        if self.transform:
+            cropped = self.transform(cropped)
+
+        return cropped, label_idx
+
+    @property
+    def num_classes(self):
+        return len(self.cat2idx)

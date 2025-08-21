@@ -180,7 +180,8 @@ def get_image_datasets_v2(
     transform_train=None,
     transform_test=None,
     random_margin: float=0.3,
-    label2idx: dict = None
+    label2idx: dict=None,
+    return_metadata: bool=True
 ):
     skip_labels = ["object"]
     datasets = {}
@@ -198,7 +199,8 @@ def get_image_datasets_v2(
             skip_labels=skip_labels,
             label2idx=label2idx,
             transforms=transform_fn,
-            random_margin=random_margin
+            random_margin=random_margin,
+            return_metadata=return_metadata
         )
 
         if k == "train":
